@@ -8,6 +8,13 @@ APP_BUNDLE="$PROJECT_DIR/dist/${APP_NAME}.app"
 DMG_DIR="$PROJECT_DIR/dist/dmg"
 DMG_PATH="$PROJECT_DIR/dist/${APP_NAME}.dmg"
 
+# Clean up any stale mounts and old build artifacts
+for vol in /Volumes/SoundVibe*; do
+    [ -d "$vol" ] && hdiutil detach "$vol" -force 2>/dev/null || true
+done
+rm -f "$PROJECT_DIR/dist/${APP_NAME}_temp.dmg"
+rm -f "$DMG_PATH"
+
 echo "=== Building SoundVibe Release ==="
 cd "$PROJECT_DIR"
 swift build -c release 2>&1 | tail -3
@@ -112,6 +119,12 @@ ln -s /Applications "$DMG_DIR/Applications"
 mkdir -p "$DMG_DIR/.background"
 cp "$BG_IMAGE" "$DMG_DIR/.background/background.png"
 
+# Detach any existing SoundVibe volumes to avoid "SoundVibe 1" naming
+for vol in /Volumes/SoundVibe*; do
+    [ -d "$vol" ] && hdiutil detach "$vol" -force 2>/dev/null || true
+done
+sleep 1
+
 # Create a read-write DMG first
 hdiutil create \
     -volname "SoundVibe" \
@@ -121,22 +134,24 @@ hdiutil create \
     "$DMG_TEMP" 2>&1 | grep -v "^$"
 
 # Mount the read-write DMG
-MOUNT_DIR=$(hdiutil attach -readwrite -noverify -noautoopen "$DMG_TEMP" | grep "/Volumes/" | sed 's/.*\/Volumes/\/Volumes/')
-echo "Mounted at: $MOUNT_DIR"
+ATTACH_OUTPUT=$(hdiutil attach -readwrite -noverify -noautoopen "$DMG_TEMP")
+MOUNT_DIR=$(echo "$ATTACH_OUTPUT" | grep "/Volumes/" | sed 's/.*\/Volumes/\/Volumes/')
+VOLUME_NAME=$(basename "$MOUNT_DIR")
+echo "Mounted at: $MOUNT_DIR (volume: $VOLUME_NAME)"
 
 # Give Finder time to detect the volume
-sleep 2
+sleep 3
 
 # Use AppleScript to set Finder view options
 osascript <<EOF
 tell application "Finder"
     -- Wait for the disk to appear
-    set diskName to "SoundVibe"
-    set maxWait to 10
+    set volumeName to "$VOLUME_NAME"
+    set maxWait to 15
     set waited to 0
     repeat while waited < maxWait
         try
-            set theDisk to disk diskName
+            set theDisk to disk volumeName
             exit repeat
         on error
             delay 1
@@ -144,9 +159,9 @@ tell application "Finder"
         end try
     end repeat
 
-    tell disk diskName
+    tell disk volumeName
         open
-        delay 1
+        delay 2
         set current view of container window to icon view
         set toolbar visible of container window to false
         set statusbar visible of container window to false
@@ -168,7 +183,7 @@ EOF
 
 # Ensure Finder writes changes
 sync
-sleep 1
+sleep 2
 
 # Detach the DMG
 hdiutil detach "$MOUNT_DIR" -quiet -force
