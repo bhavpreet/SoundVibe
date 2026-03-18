@@ -151,19 +151,55 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         variant: String,
         menuBar: MenuBarManager
     ) {
-        menuBar.updateStatusText("Loading Whisper model...")
-        NSLog("[SoundVibe] Starting Whisper model load: \(variant)")
-        Task {
-            do {
-                try await whisper.loadModel(variant: variant)
-                menuBar.updateStatusText("Ready")
-                NSLog("[SoundVibe] Whisper model loaded: \(variant)")
-            } catch {
-                NSLog("[SoundVibe] Whisper load FAILED: \(error)")
-                menuBar.updateStatusText(
-                    "⚠️ Model failed to load"
+        // Check for a pre-downloaded model from onboarding
+        let cachedFolder = UserDefaults.standard.string(
+            forKey: "soundvibe.whisperModelFolder"
+        )
+
+        if let folder = cachedFolder,
+           FileManager.default.fileExists(atPath: folder) {
+            menuBar.updateStatusText("Loading model...")
+            NSLog("[SoundVibe] Loading cached model from: \(folder)")
+            Task {
+                do {
+                    try await whisper.loadModel(fromFolder: folder)
+                    menuBar.updateStatusText("Ready")
+                    NSLog("[SoundVibe] Model loaded from cache")
+                } catch {
+                    NSLog("[SoundVibe] Cache load failed: \(error)")
+                    // Fall back to download
+                    await downloadModel(
+                        whisper: whisper,
+                        variant: variant,
+                        menuBar: menuBar
+                    )
+                }
+            }
+        } else {
+            Task {
+                await downloadModel(
+                    whisper: whisper,
+                    variant: variant,
+                    menuBar: menuBar
                 )
             }
+        }
+    }
+
+    private func downloadModel(
+        whisper: WhisperEngine,
+        variant: String,
+        menuBar: MenuBarManager
+    ) async {
+        menuBar.updateStatusText("Downloading model...")
+        NSLog("[SoundVibe] Downloading Whisper model: \(variant)")
+        do {
+            try await whisper.loadModel(variant: variant)
+            menuBar.updateStatusText("Ready")
+            NSLog("[SoundVibe] Whisper model downloaded: \(variant)")
+        } catch {
+            NSLog("[SoundVibe] Whisper download FAILED: \(error)")
+            menuBar.updateStatusText("⚠️ Model failed to load")
         }
     }
 
