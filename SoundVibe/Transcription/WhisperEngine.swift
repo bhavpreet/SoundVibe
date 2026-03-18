@@ -85,6 +85,7 @@ public class WhisperEngine: TranscriptionEngine, @unchecked Sendable {
             let config = WhisperKitConfig(
                 model: "openai_whisper-\(variant)",
                 downloadBase: downloadBase,
+                tokenizerFolder: downloadBase,
                 verbose: false,
                 logLevel: .none,
                 prewarm: true,
@@ -111,11 +112,18 @@ public class WhisperEngine: TranscriptionEngine, @unchecked Sendable {
     }
 
     /// Load a pre-downloaded model from a local folder path.
-    /// Skips downloading — the model must already exist on disk.
+    /// Skips model downloading — the model must already exist on disk.
+    /// The tokenizer may still be fetched on first load and is stored
+    /// alongside the model inside Application Support.
     public func loadModel(fromFolder path: String) async throws {
         do {
+            let downloadBase = WhisperModelSize.modelsDirectory
+            try WhisperModelSize.ensureModelsDirectoryExists()
+
             let config = WhisperKitConfig(
+                downloadBase: downloadBase,
                 modelFolder: path,
+                tokenizerFolder: downloadBase,
                 verbose: false,
                 logLevel: .none,
                 prewarm: true,
