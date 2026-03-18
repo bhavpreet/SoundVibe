@@ -580,11 +580,15 @@ struct ModelDownloadStep: View {
         downloadProgress = 0.0
 
         let variant = "openai_whisper-\(selectedModel.rawValue)"
+        let downloadBase = WhisperModelSize.modelsDirectory
 
         Task {
             do {
+                try WhisperModelSize.ensureModelsDirectoryExists()
+
                 let folderURL = try await WhisperKit.download(
-                    variant: variant
+                    variant: variant,
+                    downloadBase: downloadBase
                 ) { progress in
                     DispatchQueue.main.async {
                         self.downloadProgress = progress

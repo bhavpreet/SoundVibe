@@ -75,11 +75,16 @@ public class WhisperEngine: TranscriptionEngine, @unchecked Sendable {
     // MARK: - Model Loading
 
     /// Load a WhisperKit model by variant name (e.g. "base", "small").
-    /// WhisperKit auto-downloads the CoreML model from HuggingFace.
+    /// WhisperKit auto-downloads the CoreML model from HuggingFace
+    /// into the app's Application Support directory.
     public func loadModel(variant: String) async throws {
         do {
+            let downloadBase = WhisperModelSize.modelsDirectory
+            try WhisperModelSize.ensureModelsDirectoryExists()
+
             let config = WhisperKitConfig(
                 model: "openai_whisper-\(variant)",
+                downloadBase: downloadBase,
                 verbose: false,
                 logLevel: .none,
                 prewarm: true,
