@@ -129,9 +129,10 @@ final class DictationOrchestrator: NSObject, ObservableObject, HotkeyManagerDele
                 NSLog("[SoundVibe] Audio capture started")
             } catch {
                 NSLog("[SoundVibe] Audio capture failed: \(error)")
-                updateState(.error(error.localizedDescription))
+                let msg = error.localizedDescription
+                updateState(.error(msg))
                 menuBarManager.updateState(.error)
-                floatingIndicatorManager.showError()
+                floatingIndicatorManager.showError(message: msg)
                 isRecording = false
             }
         }
@@ -157,9 +158,10 @@ final class DictationOrchestrator: NSObject, ObservableObject, HotkeyManagerDele
 
             guard !audioData.isEmpty else {
                 logger.warning("No audio was captured")
-                updateState(.error("No audio captured. Please try speaking again."))
+                let msg = "No audio captured. Please try speaking again."
+                updateState(.error(msg))
                 menuBarManager.updateState(.error)
-                floatingIndicatorManager.showError()
+                floatingIndicatorManager.showError(message: msg)
                 return
             }
 
@@ -218,9 +220,10 @@ final class DictationOrchestrator: NSObject, ObservableObject, HotkeyManagerDele
             // Check if model is loaded before trying to transcribe
             guard transcriptionEngine.isModelLoaded else {
                 NSLog("[SoundVibe] Model not loaded yet — still downloading")
-                updateState(.error("Whisper model is still downloading. Please wait."))
+                let msg = "Whisper model is still downloading. Please wait."
+                updateState(.error(msg))
                 menuBarManager.updateState(.error)
-                floatingIndicatorManager.showError()
+                floatingIndicatorManager.showError(message: msg)
                 return
             }
 
@@ -266,7 +269,7 @@ final class DictationOrchestrator: NSObject, ObservableObject, HotkeyManagerDele
             logger.error("Pipeline error: \(msg)")
             updateState(.error(msg))
             menuBarManager.updateState(.error)
-            floatingIndicatorManager.showError()
+            floatingIndicatorManager.showError(message: msg)
         }
     }
 

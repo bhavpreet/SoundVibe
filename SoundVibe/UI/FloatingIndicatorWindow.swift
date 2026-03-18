@@ -23,6 +23,7 @@ class IndicatorStateModel: ObservableObject {
     static let barCount = 20
 
     @Published var state: IndicatorState = .listening
+    @Published var errorMessage: String = ""
 
     /// Phase accumulator for the processing spinner animation.
     @Published var waveformPhase: Double = 0
@@ -128,8 +129,9 @@ class FloatingIndicatorWindow: NSPanel {
         }
     }
 
-    func showError() {
+    func showError(message: String = "An error occurred") {
         DispatchQueue.main.async {
+            self.stateModel.errorMessage = message
             self.stateModel.state = .error
             self.positionNearCursor()
             self.orderFrontRegardless()
@@ -248,20 +250,25 @@ struct FloatingIndicatorContentView: View {
                         }
 
                     case .error:
-                        VStack(spacing: 12) {
+                        VStack(spacing: 8) {
                             Image(systemName: "exclamationmark.circle.fill")
-                                .font(.system(size: 40))
+                                .font(.system(size: 32))
                                 .foregroundColor(.red)
 
-                            Text("Error")
-                                .font(.headline)
+                            Text(stateModel.errorMessage)
+                                .font(.caption)
                                 .foregroundColor(.red)
+                                .multilineTextAlignment(.center)
+                                .lineLimit(3)
                         }
                     }
                 }
                 .padding(20)
             }
-            .frame(width: 200, height: 120)
+            .frame(
+                width: stateModel.state == .error ? 250 : 200,
+                height: 120
+            )
             .background(Color.clear)
         }
     }
@@ -324,8 +331,8 @@ class FloatingIndicatorManager {
         window.showSuccess()
     }
 
-    func showError() {
-        window.showError()
+    func showError(message: String = "An error occurred") {
+        window.showError(message: message)
     }
 
     func hide() {
