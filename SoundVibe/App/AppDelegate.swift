@@ -195,6 +195,15 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         NSLog("[SoundVibe] Downloading Whisper model: \(variant)")
         do {
             try await whisper.loadModel(variant: variant)
+            // Cache the model folder path so subsequent launches
+            // skip the download and load from disk directly.
+            if let folder = whisper.currentModelPath {
+                UserDefaults.standard.set(
+                    folder,
+                    forKey: "soundvibe.whisperModelFolder"
+                )
+                NSLog("[SoundVibe] Cached model path: \(folder)")
+            }
             menuBar.updateStatusText("Ready")
             NSLog("[SoundVibe] Whisper model downloaded: \(variant)")
         } catch {
