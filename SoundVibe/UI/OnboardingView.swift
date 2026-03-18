@@ -2,6 +2,7 @@
 
 import SwiftUI
 import AVFoundation
+import WhisperKit
 
 /// First-run setup flow for SoundVibe
 struct OnboardingView: View {
@@ -14,8 +15,12 @@ struct OnboardingView: View {
     @State private var selectedTriggerMode: TriggerMode = .holdToTalk
 
     @State private var checkAccessibilityTimer: Timer?
+    @State private var modelDownloadComplete: Bool = false
+    @State private var modelDownloadProgress: Double = 0.0
+    @State private var modelDownloadStatus: String = "Waiting..."
+    @State private var modelFolderPath: String = ""
 
-    let totalSteps = 6
+    let totalSteps = 7
 
     var body: some View {
         ZStack {
@@ -56,8 +61,16 @@ struct OnboardingView: View {
                     LanguageStep(selectedLanguage: $selectedLanguage)
                         .tag(4)
 
+                    ModelDownloadStep(
+                        downloadComplete: $modelDownloadComplete,
+                        downloadProgress: $modelDownloadProgress,
+                        downloadStatus: $modelDownloadStatus,
+                        modelFolderPath: $modelFolderPath
+                    )
+                    .tag(5)
+
                     ReadyStep()
-                        .tag(5)
+                        .tag(6)
                 }
                 .tabViewStyle(.automatic)
                 .frame(maxWidth: .infinity, maxHeight: .infinity)
@@ -106,6 +119,7 @@ struct OnboardingView: View {
         case 1: return microphoneGranted
         case 2: return accessibilityGranted
         case 3: return !selectedHotkey.isEmpty
+        case 5: return modelDownloadComplete
         default: return true
         }
     }
@@ -125,6 +139,14 @@ struct OnboardingView: View {
         settings.selectedLanguage = selectedLanguage.rawValue
         settings.triggerMode = selectedTriggerMode
         // Hotkey is already saved by HotkeyStep when recorded
+
+        // Save the downloaded model folder path
+        if !modelFolderPath.isEmpty {
+            UserDefaults.standard.set(
+                modelFolderPath,
+                forKey: "soundvibe.whisperModelFolder"
+            )
+        }
 
         // Mark onboarding as completed
         UserDefaults.standard.set(true, forKey: "SoundVibe_OnboardingCompleted")
@@ -482,6 +504,109 @@ struct LanguageStep: View {
             .pickerStyle(.radioGroup)
 
             Spacer()
+        }
+    }
+}
+
+struct ModelDownloadStep: View {
+    @Binding var downloadComplete: Bool
+    @Binding var downloadProgress: Double
+    @Binding var downloadStatus: String
+    @Binding var modelFolderPath: String
+
+    @State private var isDownloading = false
+
+    private var selectedModel: WhisperModelSize {
+        SettingsManager.shared.selectedModelSize
+    }
+
+    var body: some View {
+        VStack(spacing: 30) {
+            Spacer()
+
+            VStack(spacing: 20) {
+                Image(systemName: "arrow.down.circle.fill")
+                    .font(.system(size: 80))
+                    .foregroundColor(.blue)
+
+                Text("Downloading Speech Model")
+                    .font(.title2)
+                    .fontWeight(.bold)
+
+                Text("\(selectedModel.displayName)")
+                    .font(.body)
+                    .foregroundColor(.secondary)
+            }
+
+            VStack(spacing: 16) {
+                ProgressView(value: downloadProgress, total: 1.0)
+                    .progressViewStyle(.linear)
+                    .frame(maxWidth: 300)
+
+                Text(downloadStatus)
+                    .font(.subheadline)
+                    .foregroundColor(.secondary)
+
+                if downloadComplete {
+                    HStack(spacing: 8) {
+                        Image(systemName: "checkmark.circle.fill")
+                            .foregroundColor(.green)
+                        Text("Model ready!")
+                            .foregroundColor(.green)
+                    }
+                    .font(.headline)
+                }
+
+                Text(
+                    "\(Int(downloadProgress * 100))%"
+                )
+                .font(.caption)
+                .foregroundColor(.secondary)
+                .monospacedDigit()
+            }
+
+            Spacer()
+        }
+        .onAppear {
+            if !isDownloading && !downloadComplete {
+                startDownload()
+            }
+        }
+    }
+
+    private func startDownload() {
+        isDownloading = true
+        downloadStatus = "Downloading..."
+        downloadProgress = 0.0
+
+        let variant = "openai_whisper-\(selectedModel.rawValue)"
+
+        Task {
+            do {
+                let folderURL = try await WhisperKit.download(
+                    variant: variant
+                ) { progress in
+                    DispatchQueue.main.async {
+                        self.downloadProgress = progress
+                            .fractionCompleted
+                        self.downloadStatus =
+                            "Downloading... \(Int(progress.fractionCompleted * 100))%"
+                    }
+                }
+
+                await MainActor.run {
+                    downloadProgress = 1.0
+                    downloadStatus = "Download complete!"
+                    modelFolderPath = folderURL.path
+                    downloadComplete = true
+                    isDownloading = false
+                }
+            } catch {
+                await MainActor.run {
+                    downloadStatus = "Error: \(error.localizedDescription)"
+                    isDownloading = false
+                }
+            }
         }
     }
 }

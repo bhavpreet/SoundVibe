@@ -105,6 +105,29 @@ public class WhisperEngine: TranscriptionEngine, @unchecked Sendable {
         currentModelPath = path
     }
 
+    /// Load a pre-downloaded model from a local folder path.
+    /// Skips downloading — the model must already exist on disk.
+    public func loadModel(fromFolder path: String) async throws {
+        do {
+            let config = WhisperKitConfig(
+                modelFolder: path,
+                verbose: false,
+                logLevel: .none,
+                prewarm: true,
+                load: true,
+                download: false
+            )
+            let kit = try await WhisperKit(config)
+            self.whisperKit = kit
+            self.isModelLoaded = true
+            self.currentModelPath = path
+        } catch {
+            throw WhisperError.modelLoadFailed(
+                reason: error.localizedDescription
+            )
+        }
+    }
+
     // MARK: - Transcription
 
     public func transcribe(
