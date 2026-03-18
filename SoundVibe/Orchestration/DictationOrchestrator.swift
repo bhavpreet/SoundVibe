@@ -70,6 +70,7 @@ final class DictationOrchestrator: NSObject, ObservableObject, HotkeyManagerDele
 
     private var isRecording = false
     private var audioTask: Task<Void, Never>?
+    private var audioLevelTask: Task<Void, Never>?
 
     // MARK: - Initialization
 
@@ -134,6 +135,9 @@ final class DictationOrchestrator: NSObject, ObservableObject, HotkeyManagerDele
                 isRecording = false
             }
         }
+
+        // Poll audio levels at ~20Hz and push to the floating indicator
+        startAudioLevelPolling()
     }
 
     func stopDictation() {
@@ -145,6 +149,7 @@ final class DictationOrchestrator: NSObject, ObservableObject, HotkeyManagerDele
         }
 
         isRecording = false
+        stopAudioLevelPolling()
 
         audioTask = Task {
             let audioData = await audioCapture.stopCapture()
@@ -172,6 +177,7 @@ final class DictationOrchestrator: NSObject, ObservableObject, HotkeyManagerDele
         guard isRecording else { return }
 
         isRecording = false
+        stopAudioLevelPolling()
         audioTask?.cancel()
         audioTask = nil
 
@@ -181,6 +187,26 @@ final class DictationOrchestrator: NSObject, ObservableObject, HotkeyManagerDele
         updateState(.idle)
         menuBarManager.updateState(.idle)
         floatingIndicatorManager.hide()
+    }
+
+    // MARK: - Audio Level Polling
+
+    /// Polls the audio capture manager's RMS level at ~20Hz
+    /// and pushes values to the floating indicator waveform.
+    private func startAudioLevelPolling() {
+        audioLevelTask = Task { [weak self] in
+            while !Task.isCancelled {
+                guard let self = self else { break }
+                let level = await self.audioCapture.audioLevel
+                self.floatingIndicatorManager.updateAudioLevel(level)
+                try? await Task.sleep(nanoseconds: 50_000_000) // 50ms
+            }
+        }
+    }
+
+    private func stopAudioLevelPolling() {
+        audioLevelTask?.cancel()
+        audioLevelTask = nil
     }
 
     // MARK: - Private Methods

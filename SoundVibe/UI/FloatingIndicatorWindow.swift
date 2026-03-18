@@ -14,8 +14,22 @@ class IndicatorStateModel: ObservableObject {
         case error
     }
 
+    static let barCount = 20
+
     @Published var state: IndicatorState = .listening
     @Published var waveformPhase: Double = 0
+
+    /// Rolling buffer of recent audio levels (0–1), one per bar.
+    /// Index 0 is oldest, last index is newest.
+    @Published var audioLevels: [Float] = Array(
+        repeating: 0, count: IndicatorStateModel.barCount
+    )
+
+    /// Push a new audio level sample, shifting the history left.
+    func pushAudioLevel(_ level: Float) {
+        audioLevels.removeFirst()
+        audioLevels.append(level)
+    }
 }
 
 // MARK: - Floating Indicator Window
@@ -59,9 +73,15 @@ class FloatingIndicatorWindow: NSPanel {
     func showListening() {
         DispatchQueue.main.async {
             self.stateModel.state = .listening
+            // Reset audio levels for a fresh waveform
+            self.stateModel.audioLevels = Array(
+                repeating: 0,
+                count: IndicatorStateModel.barCount
+            )
             self.positionNearCursor()
             self.orderFrontRegardless()
-            self.startWaveformAnimation()
+            // No sine-wave timer needed — audio levels are pushed
+            // from the orchestrator via updateAudioLevel().
             self.scheduleHideTimer(after: 30)
         }
     }
@@ -169,8 +189,14 @@ struct FloatingIndicatorContentView: View {
                     switch stateModel.state {
                     case .listening:
                         VStack(spacing: 12) {
-                            AnimatedWaveform(phase: stateModel.waveformPhase)
-                                .frame(height: 40)
+                            AnimatedWaveform(
+                                audioLevels: stateModel.audioLevels
+                            )
+                            .frame(height: 40)
+                            .animation(
+                                .easeOut(duration: 0.05),
+                                value: stateModel.audioLevels
+                            )
 
                             Text("Listening...")
                                 .font(.headline)
@@ -220,35 +246,34 @@ struct FloatingIndicatorContentView: View {
 
 // MARK: - Animated Waveform
 
+/// Waveform view driven by real audio levels.
+/// Each bar represents a recent RMS audio sample, creating a
+/// scrolling waveform that responds to the user's voice.
 struct AnimatedWaveform: View {
-    let phase: Double
-    let bars = 20
+    let audioLevels: [Float]
+
+    private let maxBarHeight: CGFloat = 40
+    private let minBarHeight: CGFloat = 3
 
     var body: some View {
         HStack(alignment: .center, spacing: 3) {
-            ForEach(0..<bars, id: \.self) { index in
-                VStack {
-                    Spacer()
-
-                    RoundedRectangle(cornerRadius: 2)
-                        .fill(Color.blue)
-                        .frame(
-                            width: 3,
-                            height: calculateBarHeight(for: index)
-                        )
-
-                    Spacer()
-                }
+            ForEach(0..<audioLevels.count, id: \.self) { index in
+                RoundedRectangle(cornerRadius: 2)
+                    .fill(Color.blue)
+                    .frame(
+                        width: 3,
+                        height: barHeight(for: index)
+                    )
             }
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)
     }
 
-    private func calculateBarHeight(for index: Int) -> Double {
-        let position = Double(index) / Double(bars)
-        let waveValue = sin(position * 2 * .pi + phase)
-        let normalized = (waveValue + 1) / 2
-        return normalized * 40 + 4
+    private func barHeight(for index: Int) -> CGFloat {
+        let level = CGFloat(audioLevels[index])
+        // Apply slight exponential curve for visual punch
+        let curved = level * level * 0.4 + level * 0.6
+        return minBarHeight + curved * maxBarHeight
     }
 }
 
@@ -282,6 +307,11 @@ class FloatingIndicatorManager {
 
     func hide() {
         window.hideIndicator()
+    }
+
+    /// Push a real-time audio level (0–1) to the waveform display.
+    func updateAudioLevel(_ level: Float) {
+        window.stateModel.pushAudioLevel(level)
     }
 }
 
