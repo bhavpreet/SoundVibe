@@ -95,22 +95,75 @@ echo "  Binary: $(du -h "$APP_BUNDLE/Contents/MacOS/SoundVibe" | cut -f1)"
 codesign -s - --force --deep "$APP_BUNDLE" 2>/dev/null || echo "  (ad-hoc signing)"
 
 echo ""
+echo "=== Generating DMG Background ==="
+BG_IMAGE="/tmp/soundvibe_dmg_bg.png"
+swift "$PROJECT_DIR/scripts/generate-dmg-background.swift" "$BG_IMAGE"
+
+echo ""
 echo "=== Creating DMG ==="
+DMG_TEMP="$PROJECT_DIR/dist/${APP_NAME}_temp.dmg"
 mkdir -p "$DMG_DIR"
 cp -R "$APP_BUNDLE" "$DMG_DIR/"
 
 # Create a symlink to /Applications for drag-and-drop install
 ln -s /Applications "$DMG_DIR/Applications"
 
-# Create the DMG
+# Create a hidden .background folder with the background image
+mkdir -p "$DMG_DIR/.background"
+cp "$BG_IMAGE" "$DMG_DIR/.background/background.png"
+
+# Create a read-write DMG first
 hdiutil create \
     -volname "SoundVibe" \
     -srcfolder "$DMG_DIR" \
     -ov \
-    -format UDZO \
-    "$DMG_PATH" 2>&1 | grep -v "^$"
+    -format UDRW \
+    "$DMG_TEMP" 2>&1 | grep -v "^$"
 
+# Mount the read-write DMG
+MOUNT_DIR=$(hdiutil attach -readwrite -noverify "$DMG_TEMP" | grep "/Volumes/" | awk '{print $NF}')
+echo "Mounted at: $MOUNT_DIR"
+
+# Use AppleScript to set Finder view options
+osascript <<EOF
+tell application "Finder"
+    tell disk "SoundVibe"
+        open
+        set current view of container window to icon view
+        set toolbar visible of container window to false
+        set statusbar visible of container window to false
+        set the bounds of container window to {100, 100, 700, 500}
+        set viewOptions to the icon view options of container window
+        set arrangement of viewOptions to not arranged
+        set icon size of viewOptions to 128
+        set background picture of viewOptions to file ".background:background.png"
+        set position of item "SoundVibe.app" of container window to {150, 190}
+        set position of item "Applications" of container window to {450, 190}
+        close
+        open
+        update without registering applications
+        delay 1
+        close
+    end tell
+end tell
+EOF
+
+# Ensure Finder writes changes
+sync
+
+# Detach the DMG
+hdiutil detach "$MOUNT_DIR" -quiet
+
+# Convert to compressed read-only DMG
+hdiutil convert \
+    "$DMG_TEMP" \
+    -format UDZO \
+    -imagekey zlib-level=9 \
+    -o "$DMG_PATH" 2>&1 | grep -v "^$"
+
+rm -f "$DMG_TEMP"
 rm -rf "$DMG_DIR"
+rm -f "$BG_IMAGE"
 
 echo ""
 echo "=== Done ==="
