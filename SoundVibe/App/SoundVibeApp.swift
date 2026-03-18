@@ -13,19 +13,6 @@ struct SoundVibeApp: App {
     #endif
 
     var body: some Scene {
-        // Main window (for debugging/testing)
-        WindowGroup {
-            VStack {
-                Text("SoundVibe")
-                    .font(.largeTitle)
-                Text("Menu Bar Application")
-                    .foregroundStyle(.secondary)
-                Text("Look for the icon in your menu bar 👆")
-                    .padding()
-            }
-            .frame(minWidth: 300, minHeight: 200)
-        }
-        
         Settings {
             SettingsView()
         }
