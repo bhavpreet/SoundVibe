@@ -121,14 +121,32 @@ hdiutil create \
     "$DMG_TEMP" 2>&1 | grep -v "^$"
 
 # Mount the read-write DMG
-MOUNT_DIR=$(hdiutil attach -readwrite -noverify "$DMG_TEMP" | grep "/Volumes/" | awk '{print $NF}')
+MOUNT_DIR=$(hdiutil attach -readwrite -noverify -noautoopen "$DMG_TEMP" | grep "/Volumes/" | sed 's/.*\/Volumes/\/Volumes/')
 echo "Mounted at: $MOUNT_DIR"
+
+# Give Finder time to detect the volume
+sleep 2
 
 # Use AppleScript to set Finder view options
 osascript <<EOF
 tell application "Finder"
-    tell disk "SoundVibe"
+    -- Wait for the disk to appear
+    set diskName to "SoundVibe"
+    set maxWait to 10
+    set waited to 0
+    repeat while waited < maxWait
+        try
+            set theDisk to disk diskName
+            exit repeat
+        on error
+            delay 1
+            set waited to waited + 1
+        end try
+    end repeat
+
+    tell disk diskName
         open
+        delay 1
         set current view of container window to icon view
         set toolbar visible of container window to false
         set statusbar visible of container window to false
@@ -142,7 +160,7 @@ tell application "Finder"
         close
         open
         update without registering applications
-        delay 1
+        delay 2
         close
     end tell
 end tell
@@ -150,9 +168,10 @@ EOF
 
 # Ensure Finder writes changes
 sync
+sleep 1
 
 # Detach the DMG
-hdiutil detach "$MOUNT_DIR" -quiet
+hdiutil detach "$MOUNT_DIR" -quiet -force
 
 # Convert to compressed read-only DMG
 hdiutil convert \
