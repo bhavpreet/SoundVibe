@@ -129,10 +129,7 @@ struct OnboardingView: View {
         // Mark onboarding as completed
         UserDefaults.standard.set(true, forKey: "SoundVibe_OnboardingCompleted")
 
-        // Close the onboarding window
-        NSApplication.shared.keyWindow?.close()
-
-        // Trigger full app initialization now that onboarding is done
+        // Trigger full app initialization — AppDelegate closes the window
         NotificationCenter.default.post(
             name: NSNotification.Name("SoundVibe_OnboardingCompleted"),
             object: nil

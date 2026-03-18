@@ -16,6 +16,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private var whisperEngine: WhisperEngine?
     private var postProcessingPipeline: PostProcessingPipeline?
     private var textInsertionEngine: TextInsertionEngine?
+    private var onboardingWindow: NSWindow?
 
     private let logger = Logger(
         subsystem: "com.soundvibe.app", category: "AppDelegate"
@@ -188,6 +189,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             name: NSNotification.Name("SoundVibe_OnboardingCompleted"),
             object: nil
         )
+        onboardingWindow?.close()
+        onboardingWindow = nil
         logger.info("Onboarding completed, initializing")
         setupApplication()
     }
@@ -209,8 +212,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         window.title = "Welcome to SoundVibe"
         window.center()
         window.makeKeyAndOrderFront(nil)
-        window.isReleasedWhenClosed = true
+        window.isReleasedWhenClosed = false
         NSApp.activate(ignoringOtherApps: true)
+
+        self.onboardingWindow = window
     }
 
     // MARK: - Error Alert
