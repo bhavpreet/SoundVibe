@@ -8,7 +8,7 @@ struct OnboardingView: View {
     @State private var currentStep: Int = 0
     @State private var microphoneGranted: Bool = false
     @State private var accessibilityGranted: Bool = false
-    @State private var selectedHotkey: String = ""
+    @State private var selectedHotkey: String = HotkeyCombo.defaultHotkey.displayString
     @State private var selectedLanguage: SupportedLanguage = .english
     @State private var recordingHotkey = false
     @State private var selectedTriggerMode: TriggerMode = .holdToTalk
