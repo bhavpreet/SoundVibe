@@ -296,8 +296,8 @@ struct AccessibilityPermissionStep: View {
                 } else {
                     Button(action: openAccessibilitySettings) {
                         HStack(spacing: 8) {
-                            Image(systemName: "gearshape.fill")
-                            Text("Open System Settings")
+                            Image(systemName: "lock.open.fill")
+                            Text("Grant Accessibility Access")
                         }
                         .frame(maxWidth: .infinity)
                         .padding()
@@ -309,7 +309,7 @@ struct AccessibilityPermissionStep: View {
             }
 
             if !granted {
-                Text("1. System Settings will open\n2. Go to Privacy & Security > Accessibility\n3. Find and enable SoundVibe")
+                Text("1. Click the button above\n2. System Settings will open to Accessibility\n3. Toggle SoundVibe ON in the list")
                     .font(.caption)
                     .foregroundColor(.secondary)
                     .multilineTextAlignment(.center)
@@ -326,9 +326,12 @@ struct AccessibilityPermissionStep: View {
     }
 
     private func openAccessibilitySettings() {
-        if let url = URL(string: "x-apple.systempreferences:com.apple.preference.security?Privacy_Accessibility") {
-            NSWorkspace.shared.open(url)
-        }
+        // Prompt the system to register the app in the Accessibility list
+        let options = [
+            kAXTrustedCheckOptionPrompt.takeUnretainedValue(): true
+        ] as CFDictionary
+        _ = AXIsProcessTrustedWithOptions(options)
+
         startCheckingAccessibility()
     }
 
