@@ -5,7 +5,11 @@ import SwiftUI
 
 // MARK: - Indicator State Model
 
-/// Observable model for the floating indicator state
+/// Observable model that drives the floating indicator UI.
+///
+/// Holds the current indicator state (listening, processing, etc.)
+/// and the audio waveform data. SwiftUI views observe this model
+/// via `@ObservedObject` to re-render when values change.
 class IndicatorStateModel: ObservableObject {
     enum IndicatorState {
         case listening
@@ -14,18 +18,37 @@ class IndicatorStateModel: ObservableObject {
         case error
     }
 
+    /// Number of bars in the waveform visualization.
+    /// Each bar corresponds to one RMS audio level sample.
     static let barCount = 20
 
     @Published var state: IndicatorState = .listening
+
+    /// Phase accumulator for the processing spinner animation.
     @Published var waveformPhase: Double = 0
 
-    /// Rolling buffer of recent audio levels (0–1), one per bar.
-    /// Index 0 is oldest, last index is newest.
+    /// Rolling buffer of recent audio RMS levels (0.0–1.0).
+    ///
+    /// This acts as a fixed-size circular history:
+    /// - Index 0 is the oldest sample
+    /// - Last index is the most recent sample
+    ///
+    /// The `DictationOrchestrator` polls `AudioCaptureManager.audioLevel`
+    /// at ~20Hz and calls `pushAudioLevel()` to feed new samples.
+    /// The `AnimatedWaveform` view reads this array to set bar heights.
     @Published var audioLevels: [Float] = Array(
         repeating: 0, count: IndicatorStateModel.barCount
     )
 
-    /// Push a new audio level sample, shifting the history left.
+    /// Appends a new audio level to the rolling buffer.
+    ///
+    /// Shifts all existing samples one position to the left
+    /// (dropping the oldest) and inserts the new sample at the end.
+    /// This creates a scrolling waveform effect: new audio appears
+    /// on the right and scrolls left over time.
+    ///
+    /// - Parameter level: Normalized RMS level from 0.0 (silence)
+    ///   to 1.0 (maximum volume).
     func pushAudioLevel(_ level: Float) {
         audioLevels.removeFirst()
         audioLevels.append(level)
