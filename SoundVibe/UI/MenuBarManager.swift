@@ -146,6 +146,15 @@ class MenuBarManager: NSObject, ObservableObject {
         aboutItem.target = self
         menu.addItem(aboutItem)
 
+        // Re-run onboarding setup
+        let rerunSetupItem = NSMenuItem(
+            title: "Re-run Setup...",
+            action: #selector(rerunOnboarding(_:)),
+            keyEquivalent: ""
+        )
+        rerunSetupItem.target = self
+        menu.addItem(rerunSetupItem)
+
         // Reset settings item (Debug)
         #if DEBUG
         let resetItem = NSMenuItem(
@@ -282,6 +291,28 @@ class MenuBarManager: NSObject, ObservableObject {
             window.isReleasedWhenClosed = false
 
             self.settingsWindow = window
+        }
+    }
+
+    @objc private func rerunOnboarding(_ sender: NSMenuItem) {
+        let alert = NSAlert()
+        alert.messageText = "Re-run Setup?"
+        alert.informativeText = "This will reset onboarding and restart the app so you can re-grant permissions and re-download the speech model."
+        alert.alertStyle = .informational
+        alert.addButton(withTitle: "Re-run Setup")
+        alert.addButton(withTitle: "Cancel")
+
+        if alert.runModal() == .alertFirstButtonReturn {
+            ResetSoundVibeSettings.resetAll()
+
+            // Relaunch the app
+            let url = Bundle.main.bundleURL
+            let task = Process()
+            task.launchPath = "/usr/bin/open"
+            task.arguments = ["-n", url.path]
+            try? task.run()
+
+            NSApplication.shared.terminate(nil)
         }
     }
 

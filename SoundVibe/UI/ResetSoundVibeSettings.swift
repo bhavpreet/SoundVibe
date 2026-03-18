@@ -27,6 +27,7 @@ struct ResetSoundVibeSettings {
             "soundvibe.pasteDelay",
             "soundvibe.silenceTimeout",
             "soundvibe.selectedInputDevice",
+            "soundvibe.whisperModelFolder",
             "SoundVibe_OnboardingCompleted"
         ]
         
