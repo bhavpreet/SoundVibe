@@ -74,31 +74,33 @@ SoundVibe is a powerful macOS application that brings speech-to-text dictation t
 
 ## Installation
 
-### Option 1: Clone from GitHub and Build
+### Option 1: Download DMG (Recommended)
+
+1. Download **SoundVibe.dmg** from the [latest release](https://github.com/bhavpreet/SoundVibe/releases/latest)
+2. Open the DMG and drag **SoundVibe** to **Applications**
+3. Launch SoundVibe from Applications
+
+> **⚠️ macOS Gatekeeper Warning:** Since SoundVibe is not signed with an Apple Developer ID, macOS will show a warning: *"Apple could not verify SoundVibe is free of malware."*
+>
+> **To bypass this:**
+> - **Right-click** (or Control-click) SoundVibe.app → click **"Open"** → click **"Open"** again in the dialog
+> - Or run in Terminal: `xattr -cr /Applications/SoundVibe.app`
+>
+> macOS will remember your choice and won't ask again.
+
+### Option 2: Build from Source
 
 ```bash
-git clone https://github.com/yourusername/soundvibe.git
-cd soundvibe
-open SoundVibe.xcodeproj
-```
-
-In Xcode:
-1. Select the "SoundVibe" scheme
-2. Select your Mac as the target
-3. Press Cmd+B to build, or Cmd+R to run
-
-The app will be built and launched. To install permanently, drag the built app from the Products folder to your Applications folder.
-
-### Option 2: Use Swift Package Manager
-
-```bash
+git clone https://github.com/bhavpreet/SoundVibe.git
+cd SoundVibe
 swift build -c release
-# Built binary at: .build/release/SoundVibe
 ```
 
-### Option 3: Download Pre-Built Binary (Coming Soon)
-
-Notarized .dmg files will be available on the GitHub releases page for easy installation.
+To create an installable DMG:
+```bash
+bash scripts/make-dmg.sh
+# Output: dist/SoundVibe.dmg
+```
 
 ---
 
