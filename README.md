@@ -10,6 +10,7 @@ SoundVibe is a powerful macOS application that brings speech-to-text dictation t
 - [Screenshots](#screenshots)
 - [System Requirements](#system-requirements)
 - [Installation](#installation)
+- [macOS Gatekeeper Warning](#macos-gatekeeper-warning)
 - [First Launch Guide](#first-launch-guide)
 - [Usage Guide](#usage-guide)
 - [Configuration Reference](#configuration-reference)
@@ -74,21 +75,38 @@ SoundVibe is a powerful macOS application that brings speech-to-text dictation t
 
 ## Installation
 
-### Option 1: Download DMG (Recommended)
+### Option 1: Homebrew (Easiest)
+
+Install via [Homebrew](https://brew.sh/):
+
+```bash
+brew tap bhavpreet/soundvibe
+brew install --cask soundvibe
+```
+
+SoundVibe will be installed to `/Applications/SoundVibe.app` and is ready to use immediately.
+
+**To update:**
+```bash
+brew upgrade --cask soundvibe
+```
+
+**To uninstall:**
+```bash
+brew uninstall --cask soundvibe
+```
+
+> **Note:** See the [macOS Gatekeeper Warning](#macos-gatekeeper-warning) section below for first-launch setup.
+
+### Option 2: Download DMG
 
 1. Download **SoundVibe.dmg** from the [latest release](https://github.com/bhavpreet/SoundVibe/releases/latest)
 2. Open the DMG and drag **SoundVibe** to **Applications**
 3. Launch SoundVibe from Applications
 
-> **⚠️ macOS Gatekeeper Warning:** Since SoundVibe is not signed with an Apple Developer ID, macOS will show a warning: *"Apple could not verify SoundVibe is free of malware."*
->
-> **To bypass this:**
-> - **Right-click** (or Control-click) SoundVibe.app → click **"Open"** → click **"Open"** again in the dialog
-> - Or run in Terminal: `xattr -cr /Applications/SoundVibe.app`
->
-> macOS will remember your choice and won't ask again.
+> **Note:** See the [macOS Gatekeeper Warning](#macos-gatekeeper-warning) section below for first-launch setup.
 
-### Option 2: Build from Source
+### Option 3: Build from Source
 
 ```bash
 git clone https://github.com/bhavpreet/SoundVibe.git
@@ -101,6 +119,45 @@ To create an installable DMG:
 bash scripts/make-dmg.sh
 # Output: dist/SoundVibe.dmg
 ```
+
+---
+
+## macOS Gatekeeper Warning
+
+SoundVibe is not signed with an Apple Developer ID, so macOS displays a security warning when you first launch it:
+
+> **"Apple could not verify SoundVibe is free of malware."**
+
+This is expected for unsigned applications. **SoundVibe is safe** — it's open-source and all processing happens locally on your device.
+
+### Bypass the Warning
+
+You only need to do this **once**. Choose your preferred method:
+
+#### Method 1: Right-Click (Easiest)
+
+1. Open **Finder** and navigate to **Applications**
+2. Find **SoundVibe.app**
+3. **Right-click** (or Control+click) → Select **"Open"**
+4. Click **"Open"** again in the confirmation dialog
+5. macOS remembers your choice — no warning on future launches
+
+#### Method 2: Terminal (Power Users)
+
+```bash
+xattr -cr /Applications/SoundVibe.app
+open /Applications/SoundVibe.app
+```
+
+This removes the quarantine attribute so the app opens normally without warnings.
+
+### Why This Happens
+
+macOS Gatekeeper checks if applications are signed by recognized developers. Unsigned apps trigger a security warning for user protection. Once you've manually approved SoundVibe once, Gatekeeper trusts it.
+
+### Future: Apple Developer ID Signing
+
+Future versions of SoundVibe will be signed with an Apple Developer ID, eliminating this warning entirely. For now, the methods above are simple one-time workarounds.
 
 ---
 
