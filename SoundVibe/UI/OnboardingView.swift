@@ -595,10 +595,10 @@ struct ModelSelectionStep: View {
   private let recommended = DeviceProfiler.recommendedModel()
 
   var body: some View {
-    VStack(spacing: 24) {
+    VStack(spacing: 20) {
       Spacer()
 
-      VStack(spacing: 16) {
+      VStack(spacing: 12) {
         Image(systemName: "cpu.fill")
           .font(.system(size: 60))
           .foregroundColor(.blue)
@@ -635,23 +635,26 @@ struct ModelSelectionStep: View {
       .font(.caption)
       .foregroundColor(.secondary)
 
-      // Model picker
-      VStack(spacing: 8) {
-        ForEach(
-          WhisperModelSize.allCases,
-          id: \.self
-        ) { model in
-          ModelSelectionRow(
-            model: model,
-            isSelected: selectedModel == model,
-            isRecommended: model == recommended
-          )
-          .onTapGesture {
-            selectedModel = model
+      // Model picker with ScrollView for overflow protection
+      ScrollView {
+        VStack(spacing: 8) {
+          ForEach(
+            WhisperModelSize.allCases,
+            id: \.self
+          ) { model in
+            ModelSelectionRow(
+              model: model,
+              isSelected: selectedModel == model,
+              isRecommended: model == recommended
+            )
+            .onTapGesture {
+              selectedModel = model
+            }
           }
         }
+        .padding(.horizontal)
       }
-      .padding(.horizontal)
+      .frame(maxHeight: 300)
 
       Spacer()
     }

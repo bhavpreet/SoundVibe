@@ -109,10 +109,29 @@ public enum WhisperModelSize: String, Codable, CaseIterable {
   }
 
   /// Checks if the model is already downloaded on disk
+  /// (WhisperKit uses folder structure, not single .bin file)
   var isDownloaded: Bool {
-    let modelPath = Self.modelsDirectory
-      .appendingPathComponent(fileName)
-    return FileManager.default.fileExists(atPath: modelPath.path)
+    // WhisperKit downloads to:
+    // modelsDirectory/openai_whisper-{variant}/
+    let folderPath = Self.modelsDirectory
+      .appendingPathComponent("openai_whisper-\(rawValue)")
+
+    // Check if folder exists
+    guard FileManager.default.fileExists(
+      atPath: folderPath.path
+    ) else {
+      return false
+    }
+
+    // Verify essential files are present
+    let requiredFiles = ["config.json", "tokenizer.json"]
+    return requiredFiles.allSatisfy { file in
+      let filePath = folderPath
+        .appendingPathComponent(file)
+      return FileManager.default.fileExists(
+        atPath: filePath.path
+      )
+    }
   }
 
   /// The directory where all Whisper models are stored
