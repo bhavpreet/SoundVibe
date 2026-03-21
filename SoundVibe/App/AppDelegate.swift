@@ -151,13 +151,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private func validateWhisperKitModel(
       at folderPath: String
     ) -> Bool {
-      let requiredFiles = [
-        "config.json",
-        "tokenizer.json",
-        "model.mlmodelc",
-      ]
-
-      return requiredFiles.allSatisfy { file in
+      return WhisperModelSize.requiredModelFiles
+        .allSatisfy { file in
         let filePath = (folderPath as NSString)
           .appendingPathComponent(file)
         return FileManager.default.fileExists(atPath: filePath)

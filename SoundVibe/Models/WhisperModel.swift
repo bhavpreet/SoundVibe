@@ -124,8 +124,7 @@ public enum WhisperModelSize: String, Codable, CaseIterable {
     }
 
     // Verify essential files are present
-    let requiredFiles = ["config.json", "tokenizer.json"]
-    return requiredFiles.allSatisfy { file in
+    return Self.requiredModelFiles.allSatisfy { file in
       let filePath = folderPath
         .appendingPathComponent(file)
       return FileManager.default.fileExists(
@@ -133,6 +132,14 @@ public enum WhisperModelSize: String, Codable, CaseIterable {
       )
     }
   }
+
+  /// Required files that must be present in a valid
+  /// WhisperKit model folder
+  static let requiredModelFiles = [
+    "config.json",
+    "tokenizer.json",
+    "model.mlmodelc",
+  ]
 
   /// The directory where all Whisper models are stored
   static var modelsDirectory: URL {
