@@ -146,6 +146,19 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
     // MARK: - Async Model Loading
 
+    /// Validate that a WhisperKit model folder contains all
+    /// required files for successful loading
+    private func validateWhisperKitModel(
+      at folderPath: String
+    ) -> Bool {
+      return WhisperModelSize.requiredModelFiles
+        .allSatisfy { file in
+        let filePath = (folderPath as NSString)
+          .appendingPathComponent(file)
+        return FileManager.default.fileExists(atPath: filePath)
+      }
+    }
+
     private func loadWhisperModelAsync(
         whisper: WhisperEngine,
         variant: String,
@@ -156,23 +169,105 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             forKey: "soundvibe.whisperModelFolder"
         )
 
+        // MARK: - Debug Logging
+
+        #if DEBUG
+        NSLog("[SoundVibe] === Model Cache Check ===")
+        NSLog(
+          "[SoundVibe] Cached folder path: "
+            + "\(cachedFolder ?? "nil")"
+        )
+
+        if let folder = cachedFolder {
+          let exists = FileManager.default
+            .fileExists(atPath: folder)
+          NSLog("[SoundVibe] Folder exists: \(exists)")
+
+          if exists {
+            do {
+              let contents = try FileManager.default
+                .contentsOfDirectory(atPath: folder)
+              NSLog(
+                "[SoundVibe] Folder contents: \(contents)"
+              )
+              NSLog(
+                "[SoundVibe] File count: \(contents.count)"
+              )
+
+              let hasConfig = contents.contains("config.json")
+              let hasTokenizer = contents
+                .contains("tokenizer.json")
+              let hasModel = contents
+                .contains(where: { $0.contains("model") })
+              NSLog(
+                "[SoundVibe] Has config.json: \(hasConfig)"
+              )
+              NSLog(
+                "[SoundVibe] Has tokenizer.json: "
+                  + "\(hasTokenizer)"
+              )
+              NSLog(
+                "[SoundVibe] Has model file: \(hasModel)"
+              )
+            } catch {
+              NSLog(
+                "[SoundVibe] Failed to list folder: "
+                  + "\(error)"
+              )
+            }
+          }
+        }
+        NSLog("[SoundVibe] === End Cache Check ===")
+        #endif
+
         if let folder = cachedFolder,
-           FileManager.default.fileExists(atPath: folder) {
+           FileManager.default.fileExists(atPath: folder),
+           validateWhisperKitModel(at: folder) {
             menuBar.updateStatusText("Loading model...")
-            NSLog("[SoundVibe] Loading cached model from: \(folder)")
+            NSLog(
+              "[SoundVibe] Loading cached model from: "
+                + "\(folder)"
+            )
             Task {
                 do {
-                    try await whisper.loadModel(fromFolder: folder)
-                    menuBar.updateStatusText("Ready")
-                    NSLog("[SoundVibe] Model loaded from cache")
-                } catch {
-                    NSLog("[SoundVibe] Cache load failed: \(error)")
-                    // Fall back to download
-                    await downloadModel(
-                        whisper: whisper,
-                        variant: variant,
-                        menuBar: menuBar
+                    try await whisper.loadModel(
+                      fromFolder: folder
                     )
+                    menuBar.updateStatusText("Ready")
+                    NSLog(
+                      "[SoundVibe] Model loaded from cache"
+                    )
+                } catch {
+                    NSLog(
+                      "[SoundVibe] Cache load failed: "
+                        + "\(error.localizedDescription)"
+                    )
+                    NSLog(
+                      "[SoundVibe] Retrying in 1 second..."
+                    )
+
+                    // Give WhisperKit time to finalize
+                    try? await Task.sleep(for: .seconds(1))
+
+                    do {
+                        try await whisper.loadModel(
+                          fromFolder: folder
+                        )
+                        NSLog(
+                          "[SoundVibe] Retry successful"
+                        )
+                        menuBar.updateStatusText("Ready")
+                    } catch {
+                        NSLog(
+                          "[SoundVibe] Retry failed, "
+                            + "will re-download: \(error)"
+                        )
+                        await downloadModel(
+                            whisper: whisper,
+                            variant: variant,
+                            menuBar: menuBar
+                        )
+                    }
                 }
             }
         } else {

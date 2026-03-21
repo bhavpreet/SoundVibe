@@ -11,7 +11,9 @@ import AppKit
 /// Represents the current state of the dictation system
 enum DictationState: Equatable {
     case idle
+    case warmingUp
     case listening
+    case finishing
     case transcribing
     case postProcessing
     case inserting
@@ -21,7 +23,8 @@ enum DictationState: Equatable {
         switch self {
         case .idle, .error:
             return false
-        case .listening, .transcribing, .postProcessing, .inserting:
+        case .warmingUp, .listening, .finishing,
+             .transcribing, .postProcessing, .inserting:
             return true
         }
     }
@@ -34,7 +37,9 @@ enum DictationState: Equatable {
     var displayDescription: String {
         switch self {
         case .idle: return "idle"
+        case .warmingUp: return "warmingUp"
         case .listening: return "listening"
+        case .finishing: return "finishing"
         case .transcribing: return "transcribing"
         case .postProcessing: return "postProcessing"
         case .inserting: return "inserting"
@@ -66,11 +71,22 @@ final class DictationOrchestrator: NSObject, ObservableObject, HotkeyManagerDele
     private let hotkeyManager: HotkeyManager
     private let menuBarManager: MenuBarManager
     private let floatingIndicatorManager: FloatingIndicatorManager
-    private let logger = Logger(subsystem: "com.soundvibe.orchestrator", category: "Orchestrator")
+    private let silenceDetector: SilenceDetector
+    private let logger = Logger(
+        subsystem: "com.soundvibe.orchestrator",
+        category: "Orchestrator"
+    )
 
     private var isRecording = false
     private var audioTask: Task<Void, Never>?
     private var audioLevelTask: Task<Void, Never>?
+    private var silenceMonitorTask: Task<Void, Never>?
+
+    /// Duration to keep recording after hotkey release (A2)
+    private let tailRecordingDelay: TimeInterval = 1.5
+
+    /// Task for the tail recording delay timer (A2)
+    private var tailRecordingTask: Task<Void, Never>?
 
     // MARK: - Initialization
 
@@ -82,7 +98,8 @@ final class DictationOrchestrator: NSObject, ObservableObject, HotkeyManagerDele
         settingsManager: SettingsManager,
         hotkeyManager: HotkeyManager,
         menuBarManager: MenuBarManager,
-        floatingIndicatorManager: FloatingIndicatorManager
+        floatingIndicatorManager: FloatingIndicatorManager,
+        silenceDetector: SilenceDetector = SilenceDetector()
     ) {
         self.audioCapture = audioCapture
         self.transcriptionEngine = transcriptionEngine
@@ -92,6 +109,7 @@ final class DictationOrchestrator: NSObject, ObservableObject, HotkeyManagerDele
         self.hotkeyManager = hotkeyManager
         self.menuBarManager = menuBarManager
         self.floatingIndicatorManager = floatingIndicatorManager
+        self.silenceDetector = silenceDetector
 
         super.init()
 
@@ -102,7 +120,10 @@ final class DictationOrchestrator: NSObject, ObservableObject, HotkeyManagerDele
     // MARK: - Public Methods
 
     func startDictation() {
-        NSLog("[SoundVibe] startDictation() called, state=\(state.displayDescription)")
+        NSLog(
+            "[SoundVibe] startDictation() called, "
+            + "state=\(state.displayDescription)"
+        )
 
         guard !isRecording else {
             NSLog("[SoundVibe] Already recording, ignoring")
@@ -111,66 +132,136 @@ final class DictationOrchestrator: NSObject, ObservableObject, HotkeyManagerDele
 
         // Allow restarting from error state (recovery)
         guard state == .idle || state.isError else {
-            NSLog("[SoundVibe] Cannot start in state: \(state.displayDescription)")
+            NSLog(
+                "[SoundVibe] Cannot start in state: "
+                + "\(state.displayDescription)"
+            )
             return
         }
 
         isRecording = true
-        updateState(.listening)
+
+        // A1: Start audio BEFORE showing indicator (warmingUp)
+        updateState(.warmingUp)
         menuBarManager.updateState(.listening)
 
         if settingsManager.showFloatingIndicator {
-            floatingIndicatorManager.showListening()
+            floatingIndicatorManager.showWarmingUp()
         }
+
+        // A6: Play start sound
+        playSoundFeedback(.start)
 
         audioTask = Task {
             do {
                 try await audioCapture.startCapture()
                 NSLog("[SoundVibe] Audio capture started")
+
+                // Transition from warmingUp → listening
+                updateState(.listening)
+                if settingsManager.showFloatingIndicator {
+                    floatingIndicatorManager.showListening()
+                }
             } catch {
                 NSLog("[SoundVibe] Audio capture failed: \(error)")
                 let msg = error.localizedDescription
                 updateState(.error(msg))
                 menuBarManager.updateState(.error)
                 floatingIndicatorManager.showError(message: msg)
+                playSoundFeedback(.error)
+                stopAudioLevelPolling()
+                stopSilenceMonitoring()
                 isRecording = false
             }
         }
 
-        // Poll audio levels at ~20Hz and push to the floating indicator
+        // Poll audio levels at ~20Hz
         startAudioLevelPolling()
+
+        // A5: Start silence monitoring
+        startSilenceMonitoring()
     }
 
     func stopDictation() {
-        NSLog("[SoundVibe] stopDictation() called, isRecording=\(isRecording)")
+        NSLog(
+            "[SoundVibe] stopDictation() called, "
+            + "isRecording=\(isRecording)"
+        )
 
         guard isRecording else {
             NSLog("[SoundVibe] Not recording, ignoring stop")
             return
         }
 
+        // A2: Enter finishing state with tail recording delay
+        updateState(.finishing)
+        if settingsManager.showFloatingIndicator {
+            floatingIndicatorManager.showFinishing()
+        }
+
+        // A6: Play stop sound
+        playSoundFeedback(.stop)
+
+        tailRecordingTask = Task {
+            // Keep recording for tail delay
+            try? await Task.sleep(
+                nanoseconds: UInt64(tailRecordingDelay * 1_000_000_000)
+            )
+
+            guard !Task.isCancelled else { return }
+            await finalizeStopDictation()
+        }
+    }
+
+    /// Immediately stops recording and processes audio.
+    private func finalizeStopDictation() async {
         isRecording = false
         stopAudioLevelPolling()
+        stopSilenceMonitoring()
 
-        audioTask = Task {
-            let audioData = await audioCapture.stopCapture()
-            logger.debug("Audio capture stopped, captured \(audioData.count) bytes")
+        let audioData = await audioCapture.stopCapture()
+        logger.debug(
+            "Audio capture stopped, captured \(audioData.count) bytes"
+        )
 
-            guard !audioData.isEmpty else {
-                logger.warning("No audio was captured")
-                let msg = "No audio captured. Please try speaking again."
-                updateState(.error(msg))
-                menuBarManager.updateState(.error)
-                floatingIndicatorManager.showError(message: msg)
-                return
-            }
-
-            if settingsManager.showFloatingIndicator {
-                floatingIndicatorManager.showProcessing()
-            }
-
-            await performTranscriptionPipeline(audioData: audioData)
+        guard !audioData.isEmpty else {
+            logger.warning("No audio was captured")
+            let msg = "No audio captured. Please try speaking again."
+            updateState(.error(msg))
+            menuBarManager.updateState(.error)
+            floatingIndicatorManager.showError(message: msg)
+            playSoundFeedback(.error)
+            return
         }
+
+        if settingsManager.showFloatingIndicator {
+            floatingIndicatorManager.showProcessing()
+        }
+
+        await performTranscriptionPipeline(audioData: audioData)
+    }
+
+    /// Resumes recording if re-pressed during tail window (A2).
+    func resumeRecording() {
+        guard state == .finishing else { return }
+
+        NSLog("[SoundVibe] Resuming recording during tail window")
+
+        // Cancel the tail timer
+        tailRecordingTask?.cancel()
+        tailRecordingTask = nil
+
+        // Reset silence detector to avoid false warnings
+        Task { await silenceDetector.reset() }
+
+        // Return to listening state
+        updateState(.listening)
+        if settingsManager.showFloatingIndicator {
+            floatingIndicatorManager.showListening()
+        }
+
+        // A6: Play start sound for resume
+        playSoundFeedback(.start)
     }
 
     func cancelDictation() {
@@ -180,6 +271,9 @@ final class DictationOrchestrator: NSObject, ObservableObject, HotkeyManagerDele
 
         isRecording = false
         stopAudioLevelPolling()
+        stopSilenceMonitoring()
+        tailRecordingTask?.cancel()
+        tailRecordingTask = nil
         audioTask?.cancel()
         audioTask = nil
 
@@ -193,13 +287,13 @@ final class DictationOrchestrator: NSObject, ObservableObject, HotkeyManagerDele
 
     // MARK: - Audio Level Polling
 
-    /// Polls the audio capture manager's RMS level at ~20Hz
+    /// Polls the audio capture manager's smoothed RMS level at ~20Hz
     /// and pushes values to the floating indicator waveform.
     private func startAudioLevelPolling() {
         audioLevelTask = Task { [weak self] in
             while !Task.isCancelled {
                 guard let self = self else { break }
-                let level = await self.audioCapture.audioLevel
+                let level = await self.audioCapture.smoothedAudioLevel
                 self.floatingIndicatorManager.updateAudioLevel(level)
                 try? await Task.sleep(nanoseconds: 50_000_000) // 50ms
             }
@@ -209,6 +303,86 @@ final class DictationOrchestrator: NSObject, ObservableObject, HotkeyManagerDele
     private func stopAudioLevelPolling() {
         audioLevelTask?.cancel()
         audioLevelTask = nil
+    }
+
+    // MARK: - Silence Monitoring (A5)
+
+    private func startSilenceMonitoring() {
+        let threshold = settingsManager.silenceTimeout
+        silenceMonitorTask = Task { [weak self] in
+            var hasWarnedSilence = false
+            while !Task.isCancelled {
+                guard let self = self else { break }
+
+                // Only monitor during active listening
+                guard self.state == .listening else {
+                    try? await Task.sleep(
+                        nanoseconds: 100_000_000
+                    )
+                    continue
+                }
+
+                let level = await self.audioCapture
+                    .smoothedAudioLevel
+                let isSilent = await self.silenceDetector
+                    .update(level: level, threshold: 0.05)
+
+                let silenceDuration = await self.silenceDetector
+                    .silenceDuration
+
+                if isSilent && silenceDuration > threshold
+                    && !hasWarnedSilence
+                {
+                    self.floatingIndicatorManager
+                        .showSilenceWarning()
+                    hasWarnedSilence = true
+                } else if !isSilent {
+                    // Reset warning flag when audio resumes
+                    if hasWarnedSilence {
+                        hasWarnedSilence = false
+                        if self.settingsManager
+                            .showFloatingIndicator
+                        {
+                            self.floatingIndicatorManager
+                                .showListening()
+                        }
+                    }
+                }
+
+                try? await Task.sleep(
+                    nanoseconds: 100_000_000
+                ) // 100ms
+            }
+        }
+    }
+
+    private func stopSilenceMonitoring() {
+        silenceMonitorTask?.cancel()
+        silenceMonitorTask = nil
+        Task {
+            await silenceDetector.reset()
+        }
+    }
+
+    // MARK: - Sound Feedback (A6)
+
+    private enum SoundFeedbackType {
+        case start
+        case stop
+        case error
+    }
+
+    private func playSoundFeedback(_ type: SoundFeedbackType) {
+        guard settingsManager.soundFeedbackEnabled else { return }
+
+        let soundName: String
+        switch type {
+        case .start: soundName = "Tink"
+        case .stop: soundName = "Pop"
+        case .error: soundName = "Basso"
+        }
+
+        NSSound(named: NSSound.Name(soundName))?.play()
     }
 
     // MARK: - Private Methods
@@ -228,7 +402,11 @@ final class DictationOrchestrator: NSObject, ObservableObject, HotkeyManagerDele
             }
 
             let audioSamples = convertDataToFloatArray(audioData)
-            NSLog("[SoundVibe] Transcribing \(audioSamples.count) samples (\(String(format: "%.1f", Double(audioSamples.count) / 16000.0))s audio)")
+            let durationSec = Double(audioSamples.count) / 16000.0
+            NSLog(
+                "[SoundVibe] Transcribing \(audioSamples.count)"
+                + " samples (\(String(format: "%.1f", durationSec))s)"
+            )
 
             let transcriptionResult = try await transcriptionEngine.transcribe(
                 audioData: audioSamples,
@@ -270,6 +448,7 @@ final class DictationOrchestrator: NSObject, ObservableObject, HotkeyManagerDele
             updateState(.error(msg))
             menuBarManager.updateState(.error)
             floatingIndicatorManager.showError(message: msg)
+            playSoundFeedback(.error)
         }
     }
 
@@ -298,9 +477,25 @@ final class DictationOrchestrator: NSObject, ObservableObject, HotkeyManagerDele
 
     nonisolated func hotkeyPressed() {
         Task { @MainActor in
-            switch settingsManager.triggerMode {
+            // A7: Check typing cooldown for hold-to-talk mode
+            if self.settingsManager.triggerMode == .holdToTalk
+                && self.settingsManager.typingCooldownEnabled
+                && self.hotkeyManager.isBlockedByTypingCooldown()
+            {
+                NSLog(
+                    "[SoundVibe] Hotkey blocked by typing cooldown"
+                )
+                return
+            }
+
+            switch self.settingsManager.triggerMode {
             case .holdToTalk:
-                self.startDictation()
+                // A2: If finishing, resume instead of starting new
+                if self.state == .finishing {
+                    self.resumeRecording()
+                } else {
+                    self.startDictation()
+                }
             case .toggle:
                 if self.isRecording {
                     self.stopDictation()
@@ -313,7 +508,8 @@ final class DictationOrchestrator: NSObject, ObservableObject, HotkeyManagerDele
 
     nonisolated func hotkeyReleased() {
         Task { @MainActor in
-            guard settingsManager.triggerMode == .holdToTalk else { return }
+            guard self.settingsManager.triggerMode == .holdToTalk
+            else { return }
             self.stopDictation()
         }
     }

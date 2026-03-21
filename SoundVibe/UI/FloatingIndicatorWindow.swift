@@ -12,10 +12,13 @@ import SwiftUI
 /// via `@ObservedObject` to re-render when values change.
 class IndicatorStateModel: ObservableObject {
     enum IndicatorState {
+        case warmingUp
         case listening
+        case finishing
         case processing
         case success
         case error
+        case silenceWarning
     }
 
     /// Number of bars in the waveform visualization.
@@ -94,6 +97,19 @@ class FloatingIndicatorWindow: NSPanel {
 
     // MARK: - Public Methods
 
+    func showWarmingUp() {
+        DispatchQueue.main.async {
+            self.stateModel.state = .warmingUp
+            self.stateModel.audioLevels = Array(
+                repeating: 0,
+                count: IndicatorStateModel.barCount
+            )
+            self.positionNearCursor()
+            self.orderFrontRegardless()
+            self.scheduleHideTimer(after: 30)
+        }
+    }
+
     func showListening() {
         DispatchQueue.main.async {
             self.stateModel.state = .listening
@@ -104,9 +120,16 @@ class FloatingIndicatorWindow: NSPanel {
             )
             self.positionNearCursor()
             self.orderFrontRegardless()
-            // No sine-wave timer needed — audio levels are pushed
-            // from the orchestrator via updateAudioLevel().
             self.scheduleHideTimer(after: 30)
+        }
+    }
+
+    func showFinishing() {
+        DispatchQueue.main.async {
+            self.stateModel.state = .finishing
+            self.positionNearCursor()
+            self.orderFrontRegardless()
+            self.scheduleHideTimer(after: 5)
         }
     }
 
@@ -126,6 +149,15 @@ class FloatingIndicatorWindow: NSPanel {
             self.positionNearCursor()
             self.orderFrontRegardless()
             self.scheduleHideTimer(after: 1)
+        }
+    }
+
+    func showSilenceWarning() {
+        DispatchQueue.main.async {
+            self.stateModel.state = .silenceWarning
+            self.positionNearCursor()
+            self.orderFrontRegardless()
+            self.scheduleHideTimer(after: 10)
         }
     }
 
@@ -212,6 +244,16 @@ struct FloatingIndicatorContentView: View {
 
                 VStack(spacing: 16) {
                     switch stateModel.state {
+                    case .warmingUp:
+                        VStack(spacing: 12) {
+                            ProgressView()
+                                .scaleEffect(1.0)
+
+                            Text("Starting...")
+                                .font(.headline)
+                                .foregroundColor(.primary)
+                        }
+
                     case .listening:
                         VStack(spacing: 12) {
                             AnimatedWaveform(
@@ -228,6 +270,19 @@ struct FloatingIndicatorContentView: View {
                                 .foregroundColor(.primary)
                         }
 
+                    case .finishing:
+                        VStack(spacing: 12) {
+                            AnimatedWaveform(
+                                audioLevels: stateModel.audioLevels
+                            )
+                            .frame(height: 40)
+                            .opacity(0.6)
+
+                            Text("Finishing...")
+                                .font(.headline)
+                                .foregroundColor(.secondary)
+                        }
+
                     case .processing:
                         VStack(spacing: 12) {
                             ProgressView()
@@ -240,20 +295,41 @@ struct FloatingIndicatorContentView: View {
 
                     case .success:
                         VStack(spacing: 12) {
-                            Image(systemName: "checkmark.circle.fill")
-                                .font(.system(size: 40))
-                                .foregroundColor(.green)
+                            Image(
+                                systemName: "checkmark.circle.fill"
+                            )
+                            .font(.system(size: 40))
+                            .foregroundColor(.green)
 
                             Text("Inserted!")
                                 .font(.headline)
                                 .foregroundColor(.green)
                         }
 
+                    case .silenceWarning:
+                        VStack(spacing: 8) {
+                            Image(
+                                systemName: "mic.slash"
+                            )
+                            .font(.system(size: 32))
+                            .foregroundColor(.orange)
+
+                            Text(
+                                "⚠️ No audio detected — check mic"
+                            )
+                            .font(.caption)
+                            .foregroundColor(.orange)
+                            .multilineTextAlignment(.center)
+                        }
+
                     case .error:
                         VStack(spacing: 8) {
-                            Image(systemName: "exclamationmark.circle.fill")
-                                .font(.system(size: 32))
-                                .foregroundColor(.red)
+                            Image(
+                                systemName:
+                                    "exclamationmark.circle.fill"
+                            )
+                            .font(.system(size: 32))
+                            .foregroundColor(.red)
 
                             Text(stateModel.errorMessage)
                                 .font(.caption)
@@ -266,7 +342,9 @@ struct FloatingIndicatorContentView: View {
                 .padding(20)
             }
             .frame(
-                width: stateModel.state == .error ? 250 : 200,
+                width: (stateModel.state == .error
+                    || stateModel.state == .silenceWarning)
+                    ? 250 : 200,
                 height: 120
             )
             .background(Color.clear)
@@ -279,17 +357,24 @@ struct FloatingIndicatorContentView: View {
 /// Waveform view driven by real audio levels.
 /// Each bar represents a recent RMS audio sample, creating a
 /// scrolling waveform that responds to the user's voice.
+///
+/// A4: Enhanced with exponential curve and color gradient
+/// (green when speaking, blue when quiet).
 struct AnimatedWaveform: View {
     let audioLevels: [Float]
 
     private let maxBarHeight: CGFloat = 40
     private let minBarHeight: CGFloat = 3
 
+    /// A3: Threshold levels for VU meter coloring
+    private let yellowThreshold: Float = 0.5
+    private let redThreshold: Float = 0.8
+
     var body: some View {
         HStack(alignment: .center, spacing: 3) {
             ForEach(0..<audioLevels.count, id: \.self) { index in
                 RoundedRectangle(cornerRadius: 2)
-                    .fill(Color.blue)
+                    .fill(barColor(for: index))
                     .frame(
                         width: 3,
                         height: barHeight(for: index)
@@ -301,9 +386,24 @@ struct AnimatedWaveform: View {
 
     private func barHeight(for index: Int) -> CGFloat {
         let level = CGFloat(audioLevels[index])
-        // Apply slight exponential curve for visual punch
-        let curved = level * level * 0.4 + level * 0.6
+        // A4: Apply exponential curve for visual punch
+        let curved = pow(level, 1.5) * 0.6 + level * 0.4
         return minBarHeight + curved * maxBarHeight
+    }
+
+    /// A3/A4: Color gradient — green when speaking, blue when
+    /// quiet, yellow/red at high levels.
+    private func barColor(for index: Int) -> Color {
+        let level = audioLevels[index]
+        if level >= redThreshold {
+            return .red
+        } else if level >= yellowThreshold {
+            return .yellow
+        } else if level > 0.1 {
+            return .green
+        } else {
+            return .blue
+        }
     }
 }
 
@@ -319,8 +419,16 @@ class FloatingIndicatorManager {
         window = FloatingIndicatorWindow()
     }
 
+    func showWarmingUp() {
+        window.showWarmingUp()
+    }
+
     func showListening() {
         window.showListening()
+    }
+
+    func showFinishing() {
+        window.showFinishing()
     }
 
     func showProcessing() {
@@ -333,6 +441,10 @@ class FloatingIndicatorManager {
 
     func showError(message: String = "An error occurred") {
         window.showError(message: message)
+    }
+
+    func showSilenceWarning() {
+        window.showSilenceWarning()
     }
 
     func hide() {

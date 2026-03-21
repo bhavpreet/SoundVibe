@@ -97,12 +97,39 @@ struct AudioSettingsView: View {
                             in: 0.5...5.0,
                             step: 0.5
                         )
-                        Text("\(String(format: "%.1f", settings.silenceTimeout))s")
-                            .frame(width: 40)
+                        Text(
+                            "\(String(format: "%.1f", settings.silenceTimeout))s"
+                        )
+                        .frame(width: 40)
                     }
                     Text("Automatically stop recording after silence")
                         .font(.caption)
                         .foregroundColor(.secondary)
+                }
+
+                Section(header: Text("Feedback")) {
+                    Toggle(
+                        "Sound Effects",
+                        isOn: $settings.soundFeedbackEnabled
+                    )
+                    Text(
+                        "Play sounds on start, stop, and error"
+                    )
+                    .font(.caption)
+                    .foregroundColor(.secondary)
+                }
+
+                Section(header: Text("Typing Cooldown")) {
+                    Toggle(
+                        "Typing Cooldown",
+                        isOn: $settings.typingCooldownEnabled
+                    )
+                    Text(
+                        "Ignore hotkey if typing within last 400ms "
+                        + "(hold-to-talk only)"
+                    )
+                    .font(.caption)
+                    .foregroundColor(.secondary)
                 }
             }
 
