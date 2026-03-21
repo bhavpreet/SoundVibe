@@ -204,6 +204,102 @@ final class AudioUXTests: XCTestCase {
         )
     }
 
+    // MARK: - Settings Export/Import
+
+    func testNewSettingsExportIncludesAudioUXKeys() {
+        let settings = SettingsManager(forTesting: true)
+        settings.soundFeedbackEnabled = false
+        settings.typingCooldownEnabled = false
+
+        let data = settings.exportSettings()
+        guard let json = try? JSONSerialization.jsonObject(
+            with: data
+        ) as? [String: Any] else {
+            XCTFail("Export should produce valid JSON")
+            return
+        }
+
+        XCTAssertNotNil(
+            json["soundFeedbackEnabled"],
+            "Export should include soundFeedbackEnabled"
+        )
+        XCTAssertNotNil(
+            json["typingCooldownEnabled"],
+            "Export should include typingCooldownEnabled"
+        )
+        XCTAssertEqual(
+            json["soundFeedbackEnabled"] as? Bool, false
+        )
+        XCTAssertEqual(
+            json["typingCooldownEnabled"] as? Bool, false
+        )
+    }
+
+    func testNewSettingsImportRestoresAudioUXKeys() throws {
+        let json: [String: Any] = [
+            "soundFeedbackEnabled": false,
+            "typingCooldownEnabled": false,
+        ]
+        let data = try JSONSerialization.data(
+            withJSONObject: json
+        )
+
+        let settings = SettingsManager(forTesting: true)
+        XCTAssertTrue(settings.soundFeedbackEnabled)
+        XCTAssertTrue(settings.typingCooldownEnabled)
+
+        try settings.importSettings(data)
+        XCTAssertFalse(
+            settings.soundFeedbackEnabled,
+            "Import should restore soundFeedbackEnabled"
+        )
+        XCTAssertFalse(
+            settings.typingCooldownEnabled,
+            "Import should restore typingCooldownEnabled"
+        )
+    }
+
+    // MARK: - Silence Detector Behavioral Tests
+
+    func testSilenceDetectorAccumulatesDuration() async throws {
+        let detector = SilenceDetector()
+
+        // Start silence
+        await detector.update(level: 0.01, threshold: 0.05)
+
+        // Wait a bit
+        try await Task.sleep(nanoseconds: 200_000_000) // 200ms
+
+        // Feed another silent sample
+        await detector.update(level: 0.02, threshold: 0.05)
+
+        let duration = await detector.silenceDuration
+        XCTAssertGreaterThan(
+            duration, 0.1,
+            "Silence duration should accumulate over time"
+        )
+    }
+
+    func testSilenceDetectorResetsOnSound() async {
+        let detector = SilenceDetector()
+
+        // Build up silence
+        await detector.update(level: 0.01, threshold: 0.05)
+        var isSilent = await detector.isSilent
+        XCTAssertTrue(isSilent)
+
+        // Sound breaks the silence
+        await detector.update(level: 0.5, threshold: 0.05)
+        isSilent = await detector.isSilent
+        XCTAssertFalse(isSilent)
+
+        let duration = await detector.silenceDuration
+        XCTAssertEqual(
+            duration, 0,
+            "Duration should reset to 0 when sound detected"
+        )
+    }
+
     // MARK: - DictationState Completeness
 
     func testAllStatesHaveDisplayDescription() {

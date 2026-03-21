@@ -10,7 +10,7 @@ public struct DeviceProfile {
   /// Total physical RAM in bytes
   let totalRAM: UInt64
 
-  /// Total RAM in gigabytes (rounded)
+  /// Total RAM in gigabytes (rounded, binary: 1 GiB = 1024³)
   var totalRAMGB: Int {
     Int(totalRAM / (1024 * 1024 * 1024))
   }
@@ -24,9 +24,9 @@ public struct DeviceProfile {
   /// Available disk space in bytes
   let availableDiskSpace: UInt64
 
-  /// Available disk space in gigabytes
+  /// Available disk space in gigabytes (decimal: 1 GB = 10⁹)
   var availableDiskSpaceGB: Double {
-    Double(availableDiskSpace) / (1024.0 * 1024.0 * 1024.0)
+    Double(availableDiskSpace) / 1_000_000_000.0
   }
 
   /// Human-readable RAM description

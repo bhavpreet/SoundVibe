@@ -163,7 +163,7 @@ final class HotkeyManager {
 
     /// A7: Checks if hotkey should be blocked due to recent typing.
     /// Only applies to hold-to-talk mode.
-    func isBlockedByTypingCooldown() async -> Bool {
+    func isBlockedByTypingCooldown() -> Bool {
         guard let lastPress = lastKeypressTime else {
             return false
         }

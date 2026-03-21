@@ -429,7 +429,9 @@ final class SettingsManager: ObservableObject {
             "clipboardRestoreEnabled": clipboardRestoreEnabled,
             "pasteDelay": pasteDelay,
             "silenceTimeout": silenceTimeout,
-            "selectedInputDevice": selectedInputDevice ?? NSNull()
+            "selectedInputDevice": selectedInputDevice ?? NSNull(),
+            "soundFeedbackEnabled": soundFeedbackEnabled,
+            "typingCooldownEnabled": typingCooldownEnabled,
         ]
 
         if let jsonData = try? JSONSerialization.data(withJSONObject: settings, options: .prettyPrinted) {
@@ -505,8 +507,19 @@ final class SettingsManager: ObservableObject {
             silenceTimeout = value
         }
 
-        if let device = json["selectedInputDevice"], !(device is NSNull), let deviceUID = device as? String {
+        if let device = json["selectedInputDevice"],
+           !(device is NSNull),
+           let deviceUID = device as? String
+        {
             selectedInputDevice = deviceUID
+        }
+
+        if let value = json["soundFeedbackEnabled"] as? Bool {
+            soundFeedbackEnabled = value
+        }
+
+        if let value = json["typingCooldownEnabled"] as? Bool {
+            typingCooldownEnabled = value
         }
     }
 

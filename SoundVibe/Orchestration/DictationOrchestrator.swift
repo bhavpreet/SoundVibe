@@ -169,6 +169,8 @@ final class DictationOrchestrator: NSObject, ObservableObject, HotkeyManagerDele
                 menuBarManager.updateState(.error)
                 floatingIndicatorManager.showError(message: msg)
                 playSoundFeedback(.error)
+                stopAudioLevelPolling()
+                stopSilenceMonitoring()
                 isRecording = false
             }
         }
@@ -249,6 +251,9 @@ final class DictationOrchestrator: NSObject, ObservableObject, HotkeyManagerDele
         tailRecordingTask?.cancel()
         tailRecordingTask = nil
 
+        // Reset silence detector to avoid false warnings
+        Task { await silenceDetector.reset() }
+
         // Return to listening state
         updateState(.listening)
         if settingsManager.showFloatingIndicator {
@@ -305,20 +310,48 @@ final class DictationOrchestrator: NSObject, ObservableObject, HotkeyManagerDele
     private func startSilenceMonitoring() {
         let threshold = settingsManager.silenceTimeout
         silenceMonitorTask = Task { [weak self] in
+            var hasWarnedSilence = false
             while !Task.isCancelled {
                 guard let self = self else { break }
-                let level = await self.audioCapture.smoothedAudioLevel
+
+                // Only monitor during active listening
+                guard self.state == .listening else {
+                    try? await Task.sleep(
+                        nanoseconds: 100_000_000
+                    )
+                    continue
+                }
+
+                let level = await self.audioCapture
+                    .smoothedAudioLevel
                 let isSilent = await self.silenceDetector
                     .update(level: level, threshold: 0.05)
 
                 let silenceDuration = await self.silenceDetector
                     .silenceDuration
 
-                if isSilent && silenceDuration > threshold {
-                    self.floatingIndicatorManager.showSilenceWarning()
+                if isSilent && silenceDuration > threshold
+                    && !hasWarnedSilence
+                {
+                    self.floatingIndicatorManager
+                        .showSilenceWarning()
+                    hasWarnedSilence = true
+                } else if !isSilent {
+                    // Reset warning flag when audio resumes
+                    if hasWarnedSilence {
+                        hasWarnedSilence = false
+                        if self.settingsManager
+                            .showFloatingIndicator
+                        {
+                            self.floatingIndicatorManager
+                                .showListening()
+                        }
+                    }
                 }
 
-                try? await Task.sleep(nanoseconds: 100_000_000) // 100ms
+                try? await Task.sleep(
+                    nanoseconds: 100_000_000
+                ) // 100ms
             }
         }
     }
@@ -369,7 +402,11 @@ final class DictationOrchestrator: NSObject, ObservableObject, HotkeyManagerDele
             }
 
             let audioSamples = convertDataToFloatArray(audioData)
-            NSLog("[SoundVibe] Transcribing \(audioSamples.count) samples (\(String(format: "%.1f", Double(audioSamples.count) / 16000.0))s audio)")
+            let durationSec = Double(audioSamples.count) / 16000.0
+            NSLog(
+                "[SoundVibe] Transcribing \(audioSamples.count)"
+                + " samples (\(String(format: "%.1f", durationSec))s)"
+            )
 
             let transcriptionResult = try await transcriptionEngine.transcribe(
                 audioData: audioSamples,
@@ -443,15 +480,12 @@ final class DictationOrchestrator: NSObject, ObservableObject, HotkeyManagerDele
             // A7: Check typing cooldown for hold-to-talk mode
             if self.settingsManager.triggerMode == .holdToTalk
                 && self.settingsManager.typingCooldownEnabled
+                && self.hotkeyManager.isBlockedByTypingCooldown()
             {
-                let blocked = await self.hotkeyManager
-                    .isBlockedByTypingCooldown()
-                if blocked {
-                    NSLog(
-                        "[SoundVibe] Hotkey blocked by typing cooldown"
-                    )
-                    return
-                }
+                NSLog(
+                    "[SoundVibe] Hotkey blocked by typing cooldown"
+                )
+                return
             }
 
             switch self.settingsManager.triggerMode {

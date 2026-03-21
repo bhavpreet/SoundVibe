@@ -147,16 +147,24 @@ private class DownloadDelegate: NSObject,
     let progress = Double(totalBytesWritten)
       / Double(totalBytesExpectedToWrite)
 
-    // Calculate speed using recent interval
-    let elapsed = now.timeIntervalSince(
+    // Calculate speed — use interval-based when possible,
+    // fall back to cumulative average for early callbacks
+    let intervalElapsed = now.timeIntervalSince(
       lastUpdateTime ?? now
     )
+    let totalElapsed = now.timeIntervalSince(
+      downloadStartTime ?? now
+    )
     var speed: Double = 0
-    if elapsed > 0.1 {
+    if intervalElapsed > 0.3 {
+      // Interval-based speed (more responsive)
       let recentBytes = totalBytesWritten - lastBytesWritten
-      speed = Double(recentBytes) / elapsed
+      speed = Double(recentBytes) / intervalElapsed
       lastBytesWritten = totalBytesWritten
       lastUpdateTime = now
+    } else if totalElapsed > 0 {
+      // Cumulative average (fallback for early updates)
+      speed = Double(totalBytesWritten) / totalElapsed
     }
 
     // Calculate ETA
@@ -204,7 +212,7 @@ private class DownloadDelegate: NSObject,
 
 /// Manages Whisper model downloads, storage, and lifecycle
 @MainActor
-public class ModelManager: NSObject, ObservableObject {
+public class ModelManager: ObservableObject {
   // MARK: - Published Properties
 
   @Published public private(set) var availableModels:
@@ -218,7 +226,6 @@ public class ModelManager: NSObject, ObservableObject {
   // MARK: - Private Properties
 
   #if os(macOS)
-  private var session: URLSession!
   private var downloadDelegates:
     [WhisperModelSize: DownloadDelegate] = [:]
   private var downloadTasks:
@@ -230,7 +237,7 @@ public class ModelManager: NSObject, ObservableObject {
 
   // MARK: - Initialization
 
-  public override init() {
+  public init() {
     let appSupportUrl = fileManager.urls(
       for: .applicationSupportDirectory,
       in: .userDomainMask
@@ -238,21 +245,11 @@ public class ModelManager: NSObject, ObservableObject {
     self.modelsDirectoryUrl = appSupportUrl
       .appendingPathComponent("SoundVibe/Models")
 
-    super.init()
-
     try? fileManager.createDirectory(
       at: modelsDirectoryUrl,
       withIntermediateDirectories: true,
       attributes: nil
     )
-
-    #if os(macOS)
-    let config = URLSessionConfiguration.default
-    config.waitsForConnectivity = true
-    // 1 hour timeout for large downloads
-    config.timeoutIntervalForResource = 3600
-    self.session = URLSession(configuration: config)
-    #endif
 
     self.availableModels = WhisperModelSize.allCases.map {
       WhisperModelInfo(size: $0)
@@ -450,59 +447,70 @@ public class ModelManager: NSObject, ObservableObject {
     return try await withCheckedThrowingContinuation {
       continuation in
       delegate.progressHandler = { [weak self] progress in
+        // Already dispatched to main in delegate
         self?.downloadProgress[model] = progress.percentage
         self?.detailedProgress[model] = progress
       }
 
       delegate.completion = {
         [weak self] location, error in
-        self?.downloadTasks.removeValue(forKey: model)
+        // Completion is called from URLSession background
+        // queue — dispatch to main for @MainActor safety
+        DispatchQueue.main.async {
+          self?.downloadTasks.removeValue(forKey: model)
+          self?.downloadDelegates
+            .removeValue(forKey: model)
 
-        if let error = error {
-          continuation.resume(
-            throwing: ModelManagerError.downloadFailed(
-              reason: error.localizedDescription
+          if let error = error {
+            continuation.resume(
+              throwing: ModelManagerError.downloadFailed(
+                reason: error.localizedDescription
+              )
             )
-          )
-          return
-        }
-
-        guard let location = location else {
-          continuation.resume(
-            throwing: ModelManagerError.downloadFailed(
-              reason: "Unknown error"
-            )
-          )
-          return
-        }
-
-        do {
-          try? FileManager.default.removeItem(
-            at: destinationUrl
-          )
-          try FileManager.default.moveItem(
-            at: location,
-            to: destinationUrl
-          )
-
-          self?.downloadProgress[model] = 1.0
-          DispatchQueue.main.asyncAfter(
-            deadline: .now() + 0.5
-          ) {
-            self?.downloadProgress
-              .removeValue(forKey: model)
-            self?.detailedProgress
-              .removeValue(forKey: model)
+            return
           }
 
-          continuation.resume()
-        } catch {
-          continuation.resume(throwing: error)
+          guard let location = location else {
+            continuation.resume(
+              throwing: ModelManagerError.downloadFailed(
+                reason: "Unknown error"
+              )
+            )
+            return
+          }
+
+          do {
+            try? FileManager.default.removeItem(
+              at: destinationUrl
+            )
+            try FileManager.default.moveItem(
+              at: location,
+              to: destinationUrl
+            )
+
+            self?.downloadProgress[model] = 1.0
+            DispatchQueue.main.asyncAfter(
+              deadline: .now() + 0.5
+            ) {
+              self?.downloadProgress
+                .removeValue(forKey: model)
+              self?.detailedProgress
+                .removeValue(forKey: model)
+            }
+
+            continuation.resume()
+          } catch {
+            continuation.resume(throwing: error)
+          }
         }
       }
 
+      // Create session with proper config for large downloads
+      let config = URLSessionConfiguration.default
+      config.waitsForConnectivity = true
+      config.timeoutIntervalForResource = 3600
       let downloadSession = URLSession(
-        configuration: .default,
+        configuration: config,
         delegate: delegate,
         delegateQueue: nil
       )
