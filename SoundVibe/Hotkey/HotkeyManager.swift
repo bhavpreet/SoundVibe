@@ -60,6 +60,14 @@ final class HotkeyManager {
     /// Tracks whether the modifier-only key is currently held down
     private var modifierKeyIsDown = false
 
+    // MARK: - Typing Cooldown (A7)
+
+    /// Timestamp of last non-hotkey keypress
+    private var lastKeypressTime: Date?
+
+    /// Cooldown duration in seconds
+    private let typingCooldownDuration: TimeInterval = 0.4
+
     // MARK: - Initialization
 
     init(
@@ -153,6 +161,16 @@ final class HotkeyManager {
         modifierKeyIsDown = false
     }
 
+    /// A7: Checks if hotkey should be blocked due to recent typing.
+    /// Only applies to hold-to-talk mode.
+    func isBlockedByTypingCooldown() async -> Bool {
+        guard let lastPress = lastKeypressTime else {
+            return false
+        }
+        let elapsed = Date().timeIntervalSince(lastPress)
+        return elapsed < typingCooldownDuration
+    }
+
     // MARK: - Event Processing (called from C callback on main thread)
 
     /// Process a raw CGEvent. Called synchronously on the main
@@ -164,6 +182,19 @@ final class HotkeyManager {
         let keyCode = UInt16(
             event.getIntegerValueField(.keyboardEventKeycode)
         )
+
+        // A7: Track non-hotkey keypresses for typing cooldown
+        if type == .keyDown {
+            let isHotkeyKey: Bool
+            if currentHotkey.isModifierOnly {
+                isHotkeyKey = false // modifier-only uses flagsChanged
+            } else {
+                isHotkeyKey = keyCode == currentHotkey.keyCode
+            }
+            if !isHotkeyKey {
+                lastKeypressTime = Date()
+            }
+        }
 
         if currentHotkey.isModifierOnly {
             processModifierOnlyEvent(

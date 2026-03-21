@@ -46,7 +46,19 @@ actor AudioCaptureManager {
     private(set) var isCapturing = false
     private(set) var audioLevel: Float = 0.0
 
-    private let delegateQueue = DispatchQueue(label: "com.soundvibe.audio.delegate", attributes: .concurrent)
+    /// Smoothed audio level with attack/decay for VU meter (A3)
+    private(set) var smoothedAudioLevel: Float = 0.0
+
+    /// Attack coefficient — how fast the meter rises
+    private let attackCoefficient: Float = 0.3
+
+    /// Decay coefficient — how fast the meter falls
+    private let decayCoefficient: Float = 0.05
+
+    private let delegateQueue = DispatchQueue(
+        label: "com.soundvibe.audio.delegate",
+        attributes: .concurrent
+    )
 
     // MARK: - Initialization
 
@@ -136,11 +148,22 @@ actor AudioCaptureManager {
         }
     }
 
-    private func didReceiveAudioBuffer(_ buffer: AVAudioPCMBuffer) async {
+    private func didReceiveAudioBuffer(
+        _ buffer: AVAudioPCMBuffer
+    ) async {
         await audioBuffer.append(buffer)
 
         let level = calculateRMSLevel(buffer)
         audioLevel = level
+
+        // A3: Apply smoothing with attack/decay
+        if level > smoothedAudioLevel {
+            smoothedAudioLevel += attackCoefficient
+                * (level - smoothedAudioLevel)
+        } else {
+            smoothedAudioLevel += decayCoefficient
+                * (level - smoothedAudioLevel)
+        }
 
         delegateQueue.async { [weak self] in
             self?.delegate?.didReceiveAudioBuffer(buffer)

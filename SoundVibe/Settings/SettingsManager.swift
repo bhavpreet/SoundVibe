@@ -181,6 +181,8 @@ final class SettingsManager: ObservableObject {
     private let pasteDelayKey = "soundvibe.pasteDelay"
     private let silenceTimeoutKey = "soundvibe.silenceTimeout"
     private let selectedInputDeviceKey = "soundvibe.selectedInputDevice"
+    private let soundFeedbackEnabledKey = "soundvibe.soundFeedbackEnabled"
+    private let typingCooldownEnabledKey = "soundvibe.typingCooldownEnabled"
 
     @Published var triggerMode: TriggerMode = .holdToTalk {
         didSet {
@@ -279,6 +281,18 @@ final class SettingsManager: ObservableObject {
         }
     }
 
+    @Published var soundFeedbackEnabled: Bool = true {
+        didSet {
+            defaults.set(soundFeedbackEnabled, forKey: soundFeedbackEnabledKey)
+        }
+    }
+
+    @Published var typingCooldownEnabled: Bool = true {
+        didSet {
+            defaults.set(typingCooldownEnabled, forKey: typingCooldownEnabledKey)
+        }
+    }
+
     private init() {
         loadSettings()
     }
@@ -344,6 +358,16 @@ final class SettingsManager: ObservableObject {
 
         // Load selectedInputDevice
         selectedInputDevice = defaults.string(forKey: selectedInputDeviceKey)
+
+        // Load sound feedback (ON by default)
+        soundFeedbackEnabled = defaults.object(
+            forKey: soundFeedbackEnabledKey
+        ) == nil ? true : defaults.bool(forKey: soundFeedbackEnabledKey)
+
+        // Load typing cooldown (ON by default)
+        typingCooldownEnabled = defaults.object(
+            forKey: typingCooldownEnabledKey
+        ) == nil ? true : defaults.bool(forKey: typingCooldownEnabledKey)
     }
 
     /// Resets all settings to their default values
@@ -363,14 +387,19 @@ final class SettingsManager: ObservableObject {
         pasteDelay = 0.05
         silenceTimeout = 3.0
         selectedInputDevice = nil
+        soundFeedbackEnabled = true
+        typingCooldownEnabled = true
 
         // Clear all keys from UserDefaults
         let allKeys = [
-            triggerModeKey, hotkeyKey, selectedModelSizeKey, selectedLanguageKey,
-            autoLanguageDetectionKey, autoPunctuationKey, postProcessingEnabledKey,
-            postProcessingModeKey, customPostProcessingPromptKey, launchAtLoginKey,
-            showFloatingIndicatorKey, clipboardRestoreEnabledKey, pasteDelayKey,
-            silenceTimeoutKey, selectedInputDeviceKey
+            triggerModeKey, hotkeyKey, selectedModelSizeKey,
+            selectedLanguageKey, autoLanguageDetectionKey,
+            autoPunctuationKey, postProcessingEnabledKey,
+            postProcessingModeKey, customPostProcessingPromptKey,
+            launchAtLoginKey, showFloatingIndicatorKey,
+            clipboardRestoreEnabledKey, pasteDelayKey,
+            silenceTimeoutKey, selectedInputDeviceKey,
+            soundFeedbackEnabledKey, typingCooldownEnabledKey,
         ]
         allKeys.forEach { defaults.removeObject(forKey: $0) }
     }
