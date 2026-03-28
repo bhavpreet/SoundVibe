@@ -82,8 +82,8 @@ final class DictationOrchestrator: NSObject, ObservableObject, HotkeyManagerDele
     private var audioLevelTask: Task<Void, Never>?
     private var silenceMonitorTask: Task<Void, Never>?
 
-    /// Duration to keep recording after hotkey release (A2)
-    private let tailRecordingDelay: TimeInterval = 1.5
+    /// Active streaming transcription session (preview-only, runs during recording).
+    private var streamingSession: StreamingTranscriptionSession?
 
     /// Task for the tail recording delay timer (A2)
     private var tailRecordingTask: Task<Void, Never>?
@@ -162,6 +162,9 @@ final class DictationOrchestrator: NSObject, ObservableObject, HotkeyManagerDele
                 if settingsManager.showFloatingIndicator {
                     floatingIndicatorManager.showListening()
                 }
+
+                // Start streaming preview if enabled
+                startStreamingSession()
             } catch {
                 NSLog("[SoundVibe] Audio capture failed: \(error)")
                 let msg = error.localizedDescription
@@ -171,6 +174,7 @@ final class DictationOrchestrator: NSObject, ObservableObject, HotkeyManagerDele
                 playSoundFeedback(.error)
                 stopAudioLevelPolling()
                 stopSilenceMonitoring()
+                streamingSession = nil
                 isRecording = false
             }
         }
@@ -203,10 +207,40 @@ final class DictationOrchestrator: NSObject, ObservableObject, HotkeyManagerDele
         playSoundFeedback(.stop)
 
         tailRecordingTask = Task {
-            // Keep recording for tail delay
-            try? await Task.sleep(
-                nanoseconds: UInt64(tailRecordingDelay * 1_000_000_000)
-            )
+            // VAD-based early cutoff: poll audio level during tail window
+            // and stop early if silence is detected
+            let tailDelay = settingsManager.tailRecordingDelay
+            let useVAD = settingsManager.vadEarlyStopEnabled
+            let silenceThreshold: Float = 0.05
+            let silenceRequiredMs: Int = 200
+            let pollIntervalNs: UInt64 = 50_000_000 // 50ms
+
+            if useVAD {
+                let totalPolls = Int(tailDelay / 0.05)
+                var consecutiveSilentPolls = 0
+                let silencePolls = silenceRequiredMs / 50
+
+                for _ in 0..<totalPolls {
+                    try? await Task.sleep(nanoseconds: pollIntervalNs)
+                    guard !Task.isCancelled else { return }
+
+                    let level = await audioCapture.smoothedAudioLevel
+                    if level < silenceThreshold {
+                        consecutiveSilentPolls += 1
+                        if consecutiveSilentPolls >= silencePolls {
+                            // Silence detected — stop early
+                            break
+                        }
+                    } else {
+                        consecutiveSilentPolls = 0
+                    }
+                }
+            } else {
+                // Fixed timer fallback
+                try? await Task.sleep(
+                    nanoseconds: UInt64(tailDelay * 1_000_000_000)
+                )
+            }
 
             guard !Task.isCancelled else { return }
             await finalizeStopDictation()
@@ -219,14 +253,20 @@ final class DictationOrchestrator: NSObject, ObservableObject, HotkeyManagerDele
         stopAudioLevelPolling()
         stopSilenceMonitoring()
 
-        let audioData = await audioCapture.stopCapture()
+        // Keep a reference — do NOT stop the streaming session yet
+        // so we can use confirmTail() if streaming-as-final is enabled.
+        let activeStreamingSession = streamingSession
+
+        let audioSamples = await audioCapture.stopCapture()
         logger.debug(
-            "Audio capture stopped, captured \(audioData.count) bytes"
+            "Audio capture stopped, captured \(audioSamples.count) samples"
         )
 
-        guard !audioData.isEmpty else {
+        guard !audioSamples.isEmpty else {
             logger.warning("No audio was captured")
             let msg = "No audio captured. Please try speaking again."
+            await activeStreamingSession?.stop()
+            streamingSession = nil
             updateState(.error(msg))
             menuBarManager.updateState(.error)
             floatingIndicatorManager.showError(message: msg)
@@ -238,7 +278,50 @@ final class DictationOrchestrator: NSObject, ObservableObject, HotkeyManagerDele
             floatingIndicatorManager.showProcessing()
         }
 
-        await performTranscriptionPipeline(audioData: audioData)
+        // Try streaming-as-final strategy
+        if settingsManager.useStreamingAsFinal,
+           let session = activeStreamingSession,
+           await session.hasContent()
+        {
+            do {
+                let streamingResult = try await session.confirmTail(
+                    audioSamples: audioSamples
+                )
+
+                // Quality heuristic: check result isn't too short
+                // or hallucinated
+                let text = streamingResult.text
+                    .trimmingCharacters(in: .whitespacesAndNewlines)
+                if text.count >= 3 {
+                    // Stop streaming session now
+                    await session.stop()
+                    streamingSession = nil
+
+                    // Use streaming result directly
+                    await performTranscriptionPipeline(
+                        audioSamples: audioSamples,
+                        streamingResult: streamingResult
+                    )
+                    return
+                } else {
+                    NSLog(
+                        "[SoundVibe] Streaming result too short "
+                        + "(\(text.count) chars), falling back"
+                    )
+                }
+            } catch {
+                NSLog(
+                    "[SoundVibe] confirmTail failed: "
+                    + "\(error.localizedDescription), falling back"
+                )
+            }
+        }
+
+        // Fallback: stop streaming session and do full re-transcription
+        await activeStreamingSession?.stop()
+        streamingSession = nil
+
+        await performTranscriptionPipeline(audioSamples: audioSamples)
     }
 
     /// Resumes recording if re-pressed during tail window (A2).
@@ -260,6 +343,11 @@ final class DictationOrchestrator: NSObject, ObservableObject, HotkeyManagerDele
             floatingIndicatorManager.showListening()
         }
 
+        // Re-start streaming session if it was stopped during tail window
+        if streamingSession == nil {
+            startStreamingSession()
+        }
+
         // A6: Play start sound for resume
         playSoundFeedback(.start)
     }
@@ -277,7 +365,10 @@ final class DictationOrchestrator: NSObject, ObservableObject, HotkeyManagerDele
         audioTask?.cancel()
         audioTask = nil
 
+        let session = streamingSession
+        streamingSession = nil
         Task {
+            await session?.stop()
             _ = await audioCapture.stopCapture()
         }
         updateState(.idle)
@@ -387,7 +478,40 @@ final class DictationOrchestrator: NSObject, ObservableObject, HotkeyManagerDele
 
     // MARK: - Private Methods
 
-    private func performTranscriptionPipeline(audioData: Data) async {
+    /// Creates and starts a streaming transcription session if enabled in settings.
+    private func startStreamingSession() {
+        guard settingsManager.streamingTranscriptionEnabled,
+              settingsManager.showFloatingIndicator,
+              transcriptionEngine.isModelLoaded else { return }
+
+        floatingIndicatorManager.clearLivePreview()
+
+        let config = StreamingTranscriptionConfig(
+            chunkInterval: settingsManager.streamingChunkInterval
+        )
+        let lang = settingsManager.autoLanguageDetection ? nil : settingsManager.selectedLanguage
+        let detectLang = settingsManager.autoLanguageDetection
+
+        let session = StreamingTranscriptionSession(
+            engine: transcriptionEngine,
+            config: config,
+            language: lang,
+            detectLanguage: detectLang,
+            onPreviewUpdate: { [weak self] text in
+                self?.floatingIndicatorManager.updateLivePreview(text)
+            }
+        )
+
+        streamingSession = session
+        session.start(audioProvider: { [weak self] in
+            await self?.audioCapture.captureSnapshot() ?? []
+        })
+    }
+
+    private func performTranscriptionPipeline(
+        audioSamples: [Float],
+        streamingResult: TranscriptionResult? = nil
+    ) async {
         do {
             updateState(.transcribing)
 
@@ -401,18 +525,36 @@ final class DictationOrchestrator: NSObject, ObservableObject, HotkeyManagerDele
                 return
             }
 
-            let audioSamples = convertDataToFloatArray(audioData)
             let durationSec = Double(audioSamples.count) / 16000.0
             NSLog(
                 "[SoundVibe] Transcribing \(audioSamples.count)"
                 + " samples (\(String(format: "%.1f", durationSec))s)"
             )
 
-            let transcriptionResult = try await transcriptionEngine.transcribe(
-                audioData: audioSamples,
-                language: settingsManager.autoLanguageDetection ? nil : settingsManager.selectedLanguage,
-                detectLanguage: settingsManager.autoLanguageDetection
-            )
+            // Trim leading/trailing silence if enabled
+            let samplesToTranscribe: [Float]
+            if settingsManager.vadTrimEnabled, streamingResult == nil {
+                let trimResult = AudioTrimmer.trimSilence(
+                    from: audioSamples, sampleRate: 16000
+                )
+                NSLog("[SoundVibe] Audio trim: \(trimResult.logSummary)")
+                samplesToTranscribe = trimResult.samples
+            } else {
+                samplesToTranscribe = audioSamples
+            }
+
+            // Use streaming result if provided, otherwise full re-transcription
+            let transcriptionResult: TranscriptionResult
+            if let streaming = streamingResult {
+                NSLog("[SoundVibe] Using streaming-as-final result")
+                transcriptionResult = streaming
+            } else {
+                transcriptionResult = try await transcriptionEngine.transcribe(
+                    audioData: samplesToTranscribe,
+                    language: settingsManager.autoLanguageDetection ? nil : settingsManager.selectedLanguage,
+                    detectLanguage: settingsManager.autoLanguageDetection
+                )
+            }
             NSLog("[SoundVibe] Transcription: \"\(transcriptionResult.text)\"")
 
             updateState(.postProcessing)
@@ -436,6 +578,7 @@ final class DictationOrchestrator: NSObject, ObservableObject, HotkeyManagerDele
             if settingsManager.showFloatingIndicator {
                 floatingIndicatorManager.showSuccess()
             }
+            floatingIndicatorManager.clearLivePreview()
 
             updateState(.idle)
             menuBarManager.updateState(.idle)
@@ -445,6 +588,8 @@ final class DictationOrchestrator: NSObject, ObservableObject, HotkeyManagerDele
             NSLog("[SoundVibe] Pipeline error: \(msg)")
             NSLog("[SoundVibe] Error type: \(type(of: error))")
             logger.error("Pipeline error: \(msg)")
+            streamingSession = nil
+            floatingIndicatorManager.clearLivePreview()
             updateState(.error(msg))
             menuBarManager.updateState(.error)
             floatingIndicatorManager.showError(message: msg)
@@ -464,13 +609,6 @@ final class DictationOrchestrator: NSObject, ObservableObject, HotkeyManagerDele
         if recentTranscriptions.count > 10 {
             recentTranscriptions.removeLast()
         }
-    }
-
-    private func convertDataToFloatArray(_ data: Data) -> [Float] {
-        let int16Array = data.withUnsafeBytes { buffer -> [Int16] in
-            Array(buffer.bindMemory(to: Int16.self))
-        }
-        return int16Array.map { Float($0) / 32768.0 }
     }
 
     // MARK: - HotkeyManagerDelegate

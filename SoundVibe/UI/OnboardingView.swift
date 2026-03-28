@@ -794,7 +794,7 @@ struct ModelDownloadStep: View {
     downloadProgress = 0.0
 
     let variant =
-      "openai_whisper-\(selectedModel.rawValue)"
+      selectedModel.whisperKitIdentifier
     let downloadBase = WhisperModelSize.modelsDirectory
 
     Task {

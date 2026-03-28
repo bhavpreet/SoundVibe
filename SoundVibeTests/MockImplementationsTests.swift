@@ -404,4 +404,131 @@ final class MockImplementationsTests: XCTestCase {
             XCTFail("Test failed: \(error)")
         }
     }
+
+    // MARK: - 7g: MockTranscriptionEngine Streaming Extension Tests
+
+    func testSetMockSegmentsStoresSegments() async throws {
+        let engine = MockTranscriptionEngine()
+        try engine.loadModel(at: "/test")
+
+        let segments = ["First segment", "Second segment", "Third segment"]
+        engine.setMockSegments(segments)
+
+        var received: [String] = []
+        _ = try await engine.transcribeStreaming(
+            audioData: Array(repeating: Float(0.1), count: 16000),
+            language: "en",
+            detectLanguage: false,
+            onSegment: { received.append($0) }
+        )
+
+        XCTAssertEqual(received, segments,
+                       "setMockSegments should store all segments, delivered in order")
+    }
+
+    func testStreamingMockEmitsSegmentsInOrderWithTiming() async throws {
+        let engine = MockTranscriptionEngine()
+        try engine.loadModel(at: "/test")
+
+        let segments = ["Alpha", "Beta", "Gamma"]
+        engine.setMockSegments(segments)
+
+        let expectation = XCTestExpectation(description: "All segments received")
+        expectation.expectedFulfillmentCount = segments.count
+
+        var received: [String] = []
+        let lock = NSLock()
+
+        _ = try await engine.transcribeStreaming(
+            audioData: Array(repeating: Float(0.1), count: 16000),
+            language: nil,
+            detectLanguage: true,
+            onSegment: { text in
+                lock.lock()
+                received.append(text)
+                lock.unlock()
+                expectation.fulfill()
+            }
+        )
+
+        await fulfillment(of: [expectation], timeout: 5.0)
+
+        XCTAssertEqual(received, segments, "All segments should be received in correct order")
+    }
+
+    func testResetFailureWorksAfterStreamingFailureIsConfigured() async throws {
+        let engine = MockTranscriptionEngine()
+        try engine.loadModel(at: "/test")
+
+        engine.setFailure(.transcriptionFailed(reason: "Streaming error"))
+
+        // Verify it fails
+        do {
+            _ = try await engine.transcribeStreaming(
+                audioData: Array(repeating: Float(0.1), count: 16000),
+                language: nil,
+                detectLanguage: true,
+                onSegment: { _ in }
+            )
+            XCTFail("Should have thrown an error")
+        } catch is WhisperError {
+            // Expected
+        }
+
+        // Reset and verify it succeeds
+        engine.resetFailure()
+
+        var callCount = 0
+        _ = try await engine.transcribeStreaming(
+            audioData: Array(repeating: Float(0.1), count: 16000),
+            language: nil,
+            detectLanguage: true,
+            onSegment: { _ in callCount += 1 }
+        )
+
+        XCTAssertEqual(callCount, 1, "Should succeed and call onSegment once after resetFailure()")
+    }
+
+    func testStreamingMockEmptyAudioThrows() async {
+        let engine = MockTranscriptionEngine()
+        try? engine.loadModel(at: "/test")
+
+        do {
+            _ = try await engine.transcribeStreaming(
+                audioData: [],
+                language: nil,
+                detectLanguage: true,
+                onSegment: { _ in }
+            )
+            XCTFail("Should throw invalidAudioData for empty audio")
+        } catch let error as WhisperError {
+            if case .invalidAudioData = error {
+                // Expected
+            } else {
+                XCTFail("Should throw invalidAudioData, got \(error)")
+            }
+        } catch {
+            XCTFail("Should throw WhisperError")
+        }
+    }
+
+    func testStreamingMockFallsBackToDefaultWhenNoSegmentsAndNoCustomResult() async throws {
+        let engine = MockTranscriptionEngine()
+        try engine.loadModel(at: "/test")
+        // No setMockSegments, no setMockResult
+
+        var received: [String] = []
+        let result = try await engine.transcribeStreaming(
+            audioData: Array(repeating: Float(0.1), count: 16000),
+            language: nil,
+            detectLanguage: true,
+            onSegment: { received.append($0) }
+        )
+
+        // Falls back to default: single onSegment call with "Mock transcription result"
+        XCTAssertEqual(received.count, 1, "Should call onSegment once as fallback")
+        XCTAssertEqual(received.first, "Mock transcription result",
+                       "Fallback should use default mock text")
+        XCTAssertFalse(result.text.isEmpty, "Result text should not be empty")
+    }
 }

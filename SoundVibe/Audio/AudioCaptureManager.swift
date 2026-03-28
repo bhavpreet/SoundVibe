@@ -83,9 +83,18 @@ actor AudioCaptureManager {
         }
     }
 
-    /// Stops audio capture and returns collected audio as 16kHz mono PCM.
-    func stopCapture() async -> Data {
-        guard isCapturing else { return Data() }
+    /// Returns a snapshot of all audio captured so far as Float samples at 16kHz,
+    /// without stopping the engine or clearing the buffer.
+    /// Returns an empty array if the engine is not currently capturing.
+    func captureSnapshot() async -> [Float] {
+        guard isCapturing else { return [] }
+        let sampleRate = engine.inputNode.outputFormat(forBus: 0).sampleRate
+        return await audioBuffer.snapshot(sampleRate: sampleRate)
+    }
+
+    /// Stops audio capture and returns collected audio as 16kHz mono Float samples.
+    func stopCapture() async -> [Float] {
+        guard isCapturing else { return [] }
 
         engine.stop()
         engine.inputNode.removeTap(onBus: 0)
@@ -98,7 +107,7 @@ actor AudioCaptureManager {
             self?.delegate?.didStopCapture()
         }
 
-        return convertFloatArrayToData(audioData)
+        return audioData
     }
 
     // MARK: - Private Methods
@@ -129,6 +138,12 @@ actor AudioCaptureManager {
         let inputNode = engine.inputNode
         let inputFormat = inputNode.outputFormat(forBus: 0)
 
+        // Always tap at the native hardware rate.
+        // NOTE: installTap() raises NSException (not a Swift Error) for
+        // incompatible formats, so attempting a non-native rate like 16kHz
+        // crashes the app — Swift do/catch cannot catch ObjC exceptions.
+        // The Accelerate-based vDSP resampler in AudioSampleBuffer handles
+        // native→16kHz conversion efficiently in software instead.
         inputNode.installTap(
             onBus: 0,
             bufferSize: 4096,
@@ -138,6 +153,7 @@ actor AudioCaptureManager {
                 await self?.didReceiveAudioBuffer(buffer)
             }
         }
+        NSLog("[SoundVibe] Audio tap installed at native rate (\(inputFormat.sampleRate) Hz)")
 
         engine.prepare()
 
@@ -192,18 +208,7 @@ actor AudioCaptureManager {
         return max(0, min(1, normalized))
     }
 
-    private func convertFloatArrayToData(_ floatArray: [Float]) -> Data {
-        var int16Array: [Int16] = []
-        int16Array.reserveCapacity(floatArray.count)
 
-        for float in floatArray {
-            let clipped = max(-1.0, min(1.0, float))
-            let int16 = Int16(clipped * 32767)
-            int16Array.append(int16)
-        }
-
-        return int16Array.withUnsafeBytes { Data($0) }
-    }
 }
 
 #endif

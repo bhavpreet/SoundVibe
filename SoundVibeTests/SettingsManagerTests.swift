@@ -394,4 +394,91 @@ final class SettingsManagerTests: XCTestCase {
         XCTAssertTrue(cases.contains(.tiny), "Should contain tiny")
         XCTAssertTrue(cases.contains(.base), "Should contain base")
     }
+
+    // MARK: - 7d: Streaming Settings Tests
+
+    func testDefaultStreamingChunkInterval() {
+        settingsManager.resetToDefaults()
+        XCTAssertEqual(settingsManager.streamingChunkInterval, 2.5, accuracy: 0.001,
+                       "Default streaming chunk interval should be 2.5 seconds")
+    }
+
+    func testStreamingChunkIntervalPersists() {
+        settingsManager.streamingChunkInterval = 3.0
+        XCTAssertEqual(settingsManager.streamingChunkInterval, 3.0, accuracy: 0.001,
+                       "streamingChunkInterval should be updated")
+
+        // Verify the value is stored (didSet calls defaults.set)
+        let stored = UserDefaults.standard.double(forKey: "soundvibe.streamingChunkInterval")
+        XCTAssertEqual(stored, 3.0, accuracy: 0.001,
+                       "streamingChunkInterval should be persisted to UserDefaults")
+    }
+
+    func testStreamingTranscriptionEnabledPersists() {
+        let original = settingsManager.streamingTranscriptionEnabled
+        settingsManager.streamingTranscriptionEnabled = !original
+
+        let stored = UserDefaults.standard.object(forKey: "soundvibe.streamingTranscriptionEnabled")
+        XCTAssertNotNil(stored, "streamingTranscriptionEnabled should be persisted to UserDefaults")
+        XCTAssertEqual(UserDefaults.standard.bool(forKey: "soundvibe.streamingTranscriptionEnabled"),
+                       !original, "Persisted value should match what was set")
+    }
+
+    func testStreamingSettingsRoundTripExportImport() {
+        settingsManager.streamingTranscriptionEnabled = false
+        settingsManager.streamingChunkInterval = 4.0
+
+        let exported = settingsManager.exportSettings()
+        guard let json = try? JSONSerialization.jsonObject(with: exported) as? [String: Any] else {
+            XCTFail("Exported settings should be valid JSON")
+            return
+        }
+
+        XCTAssertEqual(json["streamingTranscriptionEnabled"] as? Bool, false,
+                       "Exported streamingTranscriptionEnabled should be false")
+        let exportedChunkInterval = json["streamingChunkInterval"] as? Double
+        XCTAssertNotNil(exportedChunkInterval, "Exported streamingChunkInterval should exist")
+        XCTAssertEqual(exportedChunkInterval ?? 0.0, 4.0, accuracy: 0.001,
+                       "Exported streamingChunkInterval should be 4.0")
+
+        settingsManager.resetToDefaults()
+
+        do {
+            try settingsManager.importSettings(exported)
+        } catch {
+            XCTFail("Import should not fail: \(error)")
+            return
+        }
+
+        XCTAssertFalse(settingsManager.streamingTranscriptionEnabled,
+                        "Imported streamingTranscriptionEnabled should be false")
+        XCTAssertEqual(settingsManager.streamingChunkInterval, 4.0, accuracy: 0.001,
+                       "Imported streamingChunkInterval should be 4.0")
+    }
+
+    func testResetToDefaultsResetsStreamingSettings() {
+        settingsManager.streamingTranscriptionEnabled = false
+        settingsManager.streamingChunkInterval = 9.9
+
+        settingsManager.resetToDefaults()
+
+        XCTAssertEqual(settingsManager.streamingChunkInterval, 2.5, accuracy: 0.001,
+                       "streamingChunkInterval should reset to 2.5")
+        // streamingTranscriptionEnabled resets to arch-dependent default
+        // Just verify it is either true or false (not some invalid state)
+        let _ = settingsManager.streamingTranscriptionEnabled // no crash
+    }
+
+    func testExportContainsStreamingKeys() {
+        let exported = settingsManager.exportSettings()
+        guard let json = try? JSONSerialization.jsonObject(with: exported) as? [String: Any] else {
+            XCTFail("Exported settings should be valid JSON")
+            return
+        }
+
+        XCTAssertNotNil(json["streamingTranscriptionEnabled"],
+                        "Exported JSON should contain streamingTranscriptionEnabled")
+        XCTAssertNotNil(json["streamingChunkInterval"],
+                        "Exported JSON should contain streamingChunkInterval")
+    }
 }

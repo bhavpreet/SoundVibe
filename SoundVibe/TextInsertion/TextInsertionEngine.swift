@@ -33,7 +33,7 @@ public enum TextInsertionError: LocalizedError {
 /// Inserts text into the active application via clipboard + Cmd+V simulation
 public class TextInsertionEngine {
     /// Default delay before simulating paste (in seconds)
-    public static let defaultPasteDelay: TimeInterval = 0.05
+    public static let defaultPasteDelay: TimeInterval = 0.03
 
     /// Default delay for clipboard restoration (in seconds)
     public static let defaultClipboardRestoreDelay: TimeInterval = 0.1
@@ -92,13 +92,19 @@ public class TextInsertionEngine {
             // Step 4: Check accessibility permissions and simulate Cmd+V
             try simulateCommandV()
 
-            // Step 5: Wait for paste to complete
-            try await Task.sleep(nanoseconds: 100_000_000) // 100ms
+            // Step 5: Wait for paste to complete (30ms — sufficient for modern macOS)
+            try await Task.sleep(nanoseconds: 30_000_000) // 30ms
 
-            // Step 6: Restore clipboard if needed
+            // Step 6: Restore clipboard non-blocking if needed
             if let savedContents = savedClipboardContents {
-                try await Task.sleep(nanoseconds: UInt64(restoreDelay * 1_000_000_000))
-                try restoreClipboardContents(savedContents, pasteboard: pasteboard)
+                Task.detached { [weak self] in
+                    try? await Task.sleep(
+                        nanoseconds: UInt64(restoreDelay * 1_000_000_000)
+                    )
+                    try? self?.restoreClipboardContents(
+                        savedContents, pasteboard: pasteboard
+                    )
+                }
             }
         } catch {
             // If insertion fails, attempt to restore clipboard immediately

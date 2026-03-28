@@ -17,6 +17,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private var postProcessingPipeline: PostProcessingPipeline?
     private var textInsertionEngine: TextInsertionEngine?
     private var onboardingWindow: NSWindow?
+    private var warmStartTask: Task<Void, Never>?
 
     private let logger = Logger(
         subsystem: "com.soundvibe.app", category: "AppDelegate"
@@ -237,6 +238,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
                     NSLog(
                       "[SoundVibe] Model loaded from cache"
                     )
+                    self.startWarmStartTimer(whisper: whisper)
                 } catch {
                     NSLog(
                       "[SoundVibe] Cache load failed: "
@@ -257,6 +259,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
                           "[SoundVibe] Retry successful"
                         )
                         menuBar.updateStatusText("Ready")
+                        self.startWarmStartTimer(whisper: whisper)
                     } catch {
                         NSLog(
                           "[SoundVibe] Retry failed, "
@@ -301,9 +304,55 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             }
             menuBar.updateStatusText("Ready")
             NSLog("[SoundVibe] Whisper model downloaded: \(variant)")
+            startWarmStartTimer(whisper: whisper)
         } catch {
             NSLog("[SoundVibe] Whisper download FAILED: \(error)")
             menuBar.updateStatusText("⚠️ Model failed to load")
+        }
+    }
+
+    // MARK: - Model Warm-Start (6A)
+
+    /// Starts a background timer that periodically runs a tiny silent inference
+    /// to keep CoreML's Metal compute pipeline and GPU memory mappings warm.
+    /// This prevents cold-start latency after idle periods.
+    private func startWarmStartTimer(whisper: WhisperEngine) {
+        warmStartTask?.cancel()
+        warmStartTask = Task { [weak self] in
+            // Wait a bit after initial model load before first warm-start
+            try? await Task.sleep(nanoseconds: 90_000_000_000) // 90s
+
+            while !Task.isCancelled {
+                guard let self else { break }
+
+                let settings = SettingsManager.shared
+                guard settings.modelKeepAliveEnabled else {
+                    // Setting disabled — sleep and check again later
+                    try? await Task.sleep(nanoseconds: 30_000_000_000)
+                    continue
+                }
+
+                // Only warm-start when idle (not during active recording/transcription)
+                let isIdle = self.dictationOrchestrator?.state == .idle
+                if isIdle == true, whisper.isModelLoaded {
+                    // Generate a tiny silent audio buffer (0.1s at 16kHz = 1600 samples)
+                    let silentBuffer = [Float](repeating: 0, count: 1600)
+                    do {
+                        _ = try await whisper.transcribe(
+                            audioData: silentBuffer,
+                            language: "en",
+                            detectLanguage: false
+                        )
+                        NSLog("[SoundVibe] Warm-start inference completed")
+                    } catch {
+                        // Swallow errors — warm-start is best-effort
+                        NSLog("[SoundVibe] Warm-start inference failed: \(error.localizedDescription)")
+                    }
+                }
+
+                // Wait 90 seconds before next warm-start
+                try? await Task.sleep(nanoseconds: 90_000_000_000)
+            }
         }
     }
 
@@ -311,6 +360,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
     private func cleanupApplication() {
         logger.info("Cleaning up")
+        warmStartTask?.cancel()
+        warmStartTask = nil
         hotkeyManager?.stop()
 
         if let audio = audioCapture {

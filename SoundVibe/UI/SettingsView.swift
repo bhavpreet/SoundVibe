@@ -158,6 +158,7 @@ struct TranscriptionSettingsView: View {
                         Text("Base").tag(WhisperModelSize.base)
                         Text("Small").tag(WhisperModelSize.small)
                         Text("Medium").tag(WhisperModelSize.medium)
+                        Text("Large V3 Turbo").tag(WhisperModelSize.largeV3Turbo)
                         Text("Large V3").tag(WhisperModelSize.largeV3)
                     }
 
@@ -184,6 +185,12 @@ struct TranscriptionSettingsView: View {
                 Section {
                     Toggle("Auto-Punctuation", isOn: $settings.autoPunctuation)
                     Toggle("Auto-Language Detection", isOn: $settings.autoLanguageDetection)
+                    Text(
+                        "Auto-detection adds ~200-500ms latency per transcription "
+                        + "(extra encoder pass). Disable for best speed."
+                    )
+                    .font(.caption)
+                    .foregroundColor(.secondary)
                 }
             }
 
@@ -294,6 +301,65 @@ struct AdvancedSettingsView: View {
                     Text("Delay before pasting (10-200ms)")
                         .font(.caption)
                         .foregroundColor(.secondary)
+                }
+
+                Section(header: Text("Tail Recording Delay")) {
+                    HStack {
+                        Slider(
+                            value: $settings.tailRecordingDelay,
+                            in: 0.0...2.0,
+                            step: 0.1
+                        )
+                        Text("\(String(format: "%.1f", settings.tailRecordingDelay))s")
+                            .frame(width: 50)
+                    }
+                    Text(
+                        "How long to keep recording after hotkey release. "
+                        + "Lower values reduce latency but may clip trailing words."
+                    )
+                    .font(.caption)
+                    .foregroundColor(.secondary)
+
+                    Toggle(
+                        "VAD Early Stop",
+                        isOn: $settings.vadEarlyStopEnabled
+                    )
+                    Text(
+                        "Use voice activity detection to stop early when silence is detected"
+                    )
+                    .font(.caption)
+                    .foregroundColor(.secondary)
+                }
+
+                Section(header: Text("Audio Trimming")) {
+                    Toggle(
+                        "VAD Audio Trim",
+                        isOn: $settings.vadTrimEnabled
+                    )
+                    Text(
+                        "Trim leading and trailing silence before transcription. "
+                        + "Reduces latency proportionally to silence removed."
+                    )
+                    .font(.caption)
+                    .foregroundColor(.secondary)
+                }
+
+                Section(header: Text("Streaming Preview")) {
+                    Text(
+                        "Preview update frequency: ~every \(String(format: "%.1f", settings.streamingChunkInterval))s"
+                    )
+                    .font(.caption)
+                    .foregroundColor(.secondary)
+
+                    Toggle(
+                        "Model Keep-Alive",
+                        isOn: $settings.modelKeepAliveEnabled
+                    )
+                    Text(
+                        "Run periodic micro-inference to prevent cold-start latency"
+                    )
+                    .font(.caption)
+                    .foregroundColor(.secondary)
                 }
 
                 Section {
