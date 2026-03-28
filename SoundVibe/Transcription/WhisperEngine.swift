@@ -32,6 +32,10 @@ public enum WhisperError: LocalizedError {
 
 // MARK: - Protocol Definition
 
+/// Callback type for receiving individual transcription segments as they are produced.
+/// Called on an arbitrary background thread; dispatch to main actor for UI updates.
+public typealias SegmentCallback = @Sendable (String) -> Void
+
 /// Abstraction for transcription engines (allows swapping implementations)
 public protocol TranscriptionEngine: AnyObject {
     func loadModel(at path: String) throws
@@ -40,6 +44,14 @@ public protocol TranscriptionEngine: AnyObject {
         audioData: [Float],
         language: String?,
         detectLanguage: Bool
+    ) async throws -> TranscriptionResult
+    /// Transcribes audio data, calling `onSegment` for each confirmed segment as it is decoded.
+    /// Conformers that do not override this fall back to a single-shot transcription.
+    func transcribeStreaming(
+        audioData: [Float],
+        language: String?,
+        detectLanguage: Bool,
+        onSegment: @escaping SegmentCallback
     ) async throws -> TranscriptionResult
     var isModelLoaded: Bool { get }
     var currentModelPath: String? { get }
@@ -52,6 +64,23 @@ extension TranscriptionEngine {
         throw WhisperError.modelLoadFailed(
             reason: "Variant-based loading not supported"
         )
+    }
+
+    /// Default streaming implementation: runs standard transcription and invokes
+    /// `onSegment` once with the complete result text.
+    public func transcribeStreaming(
+        audioData: [Float],
+        language: String?,
+        detectLanguage: Bool,
+        onSegment: @escaping SegmentCallback
+    ) async throws -> TranscriptionResult {
+        let result = try await transcribe(
+            audioData: audioData,
+            language: language,
+            detectLanguage: detectLanguage
+        )
+        onSegment(result.text)
+        return result
     }
 }
 
@@ -82,8 +111,18 @@ public class WhisperEngine: TranscriptionEngine, @unchecked Sendable {
             let downloadBase = WhisperModelSize.modelsDirectory
             try WhisperModelSize.ensureModelsDirectoryExists()
 
+            // Resolve the WhisperKit model identifier from the variant string.
+            // Use the centralized whisperKitIdentifier to handle naming quirks
+            // (e.g. large-v3_turbo uses underscore, not hyphen, in the hub).
+            let modelIdentifier: String
+            if let modelSize = WhisperModelSize(rawValue: variant) {
+                modelIdentifier = modelSize.whisperKitIdentifier
+            } else {
+                modelIdentifier = "openai_whisper-\(variant)"
+            }
+
             let config = WhisperKitConfig(
-                model: "openai_whisper-\(variant)",
+                model: modelIdentifier,
                 downloadBase: downloadBase,
                 tokenizerFolder: downloadBase,
                 verbose: false,
@@ -168,13 +207,93 @@ public class WhisperEngine: TranscriptionEngine, @unchecked Sendable {
                 topK: 5,
                 usePrefillPrompt: !detectLanguage,
                 usePrefillCache: true,
-                detectLanguage: detectLanguage ? true : nil
+                detectLanguage: detectLanguage ? true : nil,
+                skipSpecialTokens: true,
+                withoutTimestamps: true,
+                clipTimestamps: [0]
             )
 
             let wkResults = try await whisperKit.transcribe(
                     audioArray: audioData,
                     decodeOptions: options
                 )
+
+            let fullText = wkResults
+                .map { $0.text }
+                .joined(separator: " ")
+                .trimmingCharacters(in: .whitespacesAndNewlines)
+
+            let detectedLanguage = wkResults.first?.language ?? language
+            let duration = Date().timeIntervalSince(startTime)
+
+            return TranscriptionResult(
+                text: fullText,
+                language: detectedLanguage,
+                duration: duration
+            )
+        } catch {
+            throw WhisperError.transcriptionFailed(
+                reason: error.localizedDescription
+            )
+        }
+    }
+
+    // MARK: - Streaming Transcription
+
+    /// Transcribes audio data, calling `onSegment` for each confirmed segment as WhisperKit
+    /// decodes it. Uses the `segmentCallback` direct parameter to avoid instance-property
+    /// threading hazards when multiple sessions might overlap.
+    public func transcribeStreaming(
+        audioData: [Float],
+        language: String? = nil,
+        detectLanguage: Bool = true,
+        onSegment: @escaping SegmentCallback
+    ) async throws -> TranscriptionResult {
+        guard let whisperKit = whisperKit, isModelLoaded else {
+            throw WhisperError.modelNotLoaded
+        }
+
+        guard !audioData.isEmpty else {
+            throw WhisperError.invalidAudioData
+        }
+
+        let startTime = Date()
+
+        do {
+            let options = DecodingOptions(
+                verbose: false,
+                task: .transcribe,
+                language: detectLanguage ? nil : language,
+                temperature: 0.0,
+                temperatureFallbackCount: 3,
+                topK: 5,
+                usePrefillPrompt: !detectLanguage,
+                usePrefillCache: true,
+                detectLanguage: detectLanguage ? true : nil,
+                skipSpecialTokens: true,
+                withoutTimestamps: true,
+                clipTimestamps: [0]
+            )
+
+            // Use the direct segmentCallback parameter (not the instance property)
+            // to avoid threading hazards if two sessions overlap.
+            // SegmentDiscoveryCallback receives [TranscriptionSegment] (non-optional array).
+            let segmentCallback: SegmentDiscoveryCallback = { segments in
+                for segment in segments {
+                    let text = segment.text.trimmingCharacters(in: .whitespacesAndNewlines)
+                    if !text.isEmpty {
+                        onSegment(text)
+                    }
+                }
+            }
+
+
+            let wkResults = try await whisperKit.transcribe(
+                audioArray: audioData,
+                decodeOptions: options,
+                callback: nil,
+                segmentCallback: segmentCallback
+            )
 
             let fullText = wkResults
                 .map { $0.text }
@@ -212,6 +331,7 @@ public class MockTranscriptionEngine: TranscriptionEngine {
     public private(set) var currentModelPath: String?
 
     private var mockResults: [String: TranscriptionResult] = [:]
+    private var mockSegments: [String] = []
     private var shouldFail: Bool = false
     private var failureError: WhisperError = .transcriptionFailed(
         reason: "Mock failure"
@@ -265,6 +385,10 @@ public class MockTranscriptionEngine: TranscriptionEngine {
         mockResults[language] = result
     }
 
+    public func setMockSegments(_ segments: [String]) {
+        mockSegments = segments
+    }
+
     public func setFailure(_ error: WhisperError) {
         shouldFail = true
         failureError = error
@@ -272,5 +396,45 @@ public class MockTranscriptionEngine: TranscriptionEngine {
 
     public func resetFailure() {
         shouldFail = false
+    }
+
+    public func transcribeStreaming(
+        audioData: [Float],
+        language: String?,
+        detectLanguage: Bool,
+        onSegment: @escaping SegmentCallback
+    ) async throws -> TranscriptionResult {
+        if shouldFail { throw failureError }
+        guard !audioData.isEmpty else {
+            throw WhisperError.invalidAudioData
+        }
+
+        if mockSegments.isEmpty {
+            // Fall back: call onSegment once with the full mock result
+            let key = language ?? "default"
+            let text = mockResults[key]?.text ?? "Mock transcription result"
+            onSegment(text)
+        } else {
+            // Emit each segment with a small simulated delay
+            for segment in mockSegments {
+                try? await Task.sleep(nanoseconds: 10_000_000) // 10ms
+                onSegment(segment)
+            }
+        }
+
+        // Return final result
+        let key = language ?? "default"
+        if let result = mockResults[key] {
+            return result
+        }
+        // If no custom result and segments are empty, use the same fallback text
+        let fallbackText = mockSegments.isEmpty
+            ? "Mock transcription result"
+            : mockSegments.joined(separator: " ")
+        return TranscriptionResult(
+            text: fallbackText,
+            language: language ?? "en",
+            duration: TimeInterval(audioData.count) / 16000.0
+        )
     }
 }

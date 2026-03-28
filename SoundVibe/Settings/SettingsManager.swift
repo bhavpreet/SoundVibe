@@ -183,6 +183,13 @@ final class SettingsManager: ObservableObject {
     private let selectedInputDeviceKey = "soundvibe.selectedInputDevice"
     private let soundFeedbackEnabledKey = "soundvibe.soundFeedbackEnabled"
     private let typingCooldownEnabledKey = "soundvibe.typingCooldownEnabled"
+    private let streamingTranscriptionEnabledKey = "soundvibe.streamingTranscriptionEnabled"
+    private let streamingChunkIntervalKey = "soundvibe.streamingChunkInterval"
+    private let tailRecordingDelayKey = "soundvibe.tailRecordingDelay"
+    private let vadEarlyStopEnabledKey = "soundvibe.vadEarlyStopEnabled"
+    private let useStreamingAsFinalKey = "soundvibe.useStreamingAsFinal"
+    private let vadTrimEnabledKey = "soundvibe.vadTrimEnabled"
+    private let modelKeepAliveEnabledKey = "soundvibe.modelKeepAliveEnabled"
 
     @Published var triggerMode: TriggerMode = .holdToTalk {
         didSet {
@@ -263,7 +270,7 @@ final class SettingsManager: ObservableObject {
         }
     }
 
-    @Published var pasteDelay: TimeInterval = 0.05 {
+    @Published var pasteDelay: TimeInterval = 0.03 {
         didSet {
             defaults.set(pasteDelay, forKey: pasteDelayKey)
         }
@@ -290,6 +297,82 @@ final class SettingsManager: ObservableObject {
     @Published var typingCooldownEnabled: Bool = true {
         didSet {
             defaults.set(typingCooldownEnabled, forKey: typingCooldownEnabledKey)
+        }
+    }
+
+    /// Whether to show partial transcription preview in the floating indicator during recording.
+    /// Defaults to true on Apple Silicon (arm64), false on Intel (x86_64).
+    @Published var streamingTranscriptionEnabled: Bool = {
+        #if arch(arm64)
+        return true
+        #else
+        return false
+        #endif
+    }() {
+        didSet {
+            defaults.set(streamingTranscriptionEnabled, forKey: streamingTranscriptionEnabledKey)
+        }
+    }
+
+    /// How often (in seconds) to run a chunk transcription during recording.
+    /// Shorter intervals give faster preview updates at higher CPU cost.
+    @Published var streamingChunkInterval: TimeInterval = {
+        #if arch(arm64)
+        return 2.0
+        #else
+        return 2.5
+        #endif
+    }() {
+        didSet {
+            defaults.set(streamingChunkInterval, forKey: streamingChunkIntervalKey)
+        }
+    }
+
+    /// Duration to keep recording after hotkey release (tail window).
+    /// Lower values reduce latency; VAD early stop can cut this further.
+    @Published var tailRecordingDelay: TimeInterval = 0.4 {
+        didSet {
+            defaults.set(tailRecordingDelay, forKey: tailRecordingDelayKey)
+        }
+    }
+
+    /// When true, the tail recording window uses VAD to detect silence
+    /// and stops early instead of waiting for the full tailRecordingDelay.
+    @Published var vadEarlyStopEnabled: Bool = true {
+        didSet {
+            defaults.set(vadEarlyStopEnabled, forKey: vadEarlyStopEnabledKey)
+        }
+    }
+
+    /// When true, trim leading and trailing silence from audio before
+    /// transcription using VAD-based energy detection. Reduces transcription
+    /// time proportionally to the amount of silence removed.
+    @Published var vadTrimEnabled: Bool = true {
+        didSet {
+            defaults.set(vadTrimEnabled, forKey: vadTrimEnabledKey)
+        }
+    }
+
+    /// When true, periodically run a tiny inference to keep the CoreML/Metal
+    /// pipeline warm and avoid cold-start latency after idle periods.
+    @Published var modelKeepAliveEnabled: Bool = true {
+        didSet {
+            defaults.set(modelKeepAliveEnabled, forKey: modelKeepAliveEnabledKey)
+        }
+    }
+
+    /// When true, use the streaming session's accumulated text as the final
+    /// result instead of re-transcribing the full audio from scratch.
+    /// Defaults to true on Apple Silicon, false on Intel.
+    @Published var useStreamingAsFinal: Bool = {
+        #if arch(arm64)
+        return true
+        #else
+        return false
+        #endif
+    }() {
+        didSet {
+            defaults.set(useStreamingAsFinal, forKey: useStreamingAsFinalKey)
         }
     }
 
@@ -368,6 +451,57 @@ final class SettingsManager: ObservableObject {
         typingCooldownEnabled = defaults.object(
             forKey: typingCooldownEnabledKey
         ) == nil ? true : defaults.bool(forKey: typingCooldownEnabledKey)
+
+        // Load streaming transcription enabled (default: true on arm64, false on x86_64)
+        let streamingDefault: Bool = {
+            #if arch(arm64)
+            return true
+            #else
+            return false
+            #endif
+        }()
+        streamingTranscriptionEnabled = defaults.object(
+            forKey: streamingTranscriptionEnabledKey
+        ) == nil ? streamingDefault : defaults.bool(forKey: streamingTranscriptionEnabledKey)
+
+        // Load streaming chunk interval (default: 2.5s)
+        let chunkIntervalValue = defaults.double(forKey: streamingChunkIntervalKey)
+        if chunkIntervalValue > 0 {
+            streamingChunkInterval = chunkIntervalValue
+        }
+
+        // Load tail recording delay (default: 0.4s)
+        let tailDelayValue = defaults.double(forKey: tailRecordingDelayKey)
+        if tailDelayValue > 0 {
+            tailRecordingDelay = tailDelayValue
+        }
+
+        // Load VAD early stop (ON by default)
+        vadEarlyStopEnabled = defaults.object(
+            forKey: vadEarlyStopEnabledKey
+        ) == nil ? true : defaults.bool(forKey: vadEarlyStopEnabledKey)
+
+        // Load useStreamingAsFinal (default: true on arm64, false on x86_64)
+        let streamingAsFinalDefault: Bool = {
+            #if arch(arm64)
+            return true
+            #else
+            return false
+            #endif
+        }()
+        useStreamingAsFinal = defaults.object(
+            forKey: useStreamingAsFinalKey
+        ) == nil ? streamingAsFinalDefault : defaults.bool(forKey: useStreamingAsFinalKey)
+
+        // Load VAD trim enabled (ON by default)
+        vadTrimEnabled = defaults.object(
+            forKey: vadTrimEnabledKey
+        ) == nil ? true : defaults.bool(forKey: vadTrimEnabledKey)
+
+        // Load model keep alive (ON by default)
+        modelKeepAliveEnabled = defaults.object(
+            forKey: modelKeepAliveEnabledKey
+        ) == nil ? true : defaults.bool(forKey: modelKeepAliveEnabledKey)
     }
 
     /// Resets all settings to their default values
@@ -384,13 +518,36 @@ final class SettingsManager: ObservableObject {
         launchAtLogin = false
         showFloatingIndicator = true
         clipboardRestoreEnabled = true
-        pasteDelay = 0.05
+        pasteDelay = 0.03
         silenceTimeout = 3.0
         selectedInputDevice = nil
         soundFeedbackEnabled = true
         typingCooldownEnabled = true
-
-        // Clear all keys from UserDefaults
+        streamingTranscriptionEnabled = {
+            #if arch(arm64)
+            return true
+            #else
+            return false
+            #endif
+        }()
+        streamingChunkInterval = {
+            #if arch(arm64)
+            return 2.0
+            #else
+            return 2.5
+            #endif
+        }()
+        tailRecordingDelay = 0.4
+        vadEarlyStopEnabled = true
+        useStreamingAsFinal = {
+            #if arch(arm64)
+            return true
+            #else
+            return false
+            #endif
+        }()
+        vadTrimEnabled = true
+        modelKeepAliveEnabled = true
         let allKeys = [
             triggerModeKey, hotkeyKey, selectedModelSizeKey,
             selectedLanguageKey, autoLanguageDetectionKey,
@@ -400,6 +557,10 @@ final class SettingsManager: ObservableObject {
             clipboardRestoreEnabledKey, pasteDelayKey,
             silenceTimeoutKey, selectedInputDeviceKey,
             soundFeedbackEnabledKey, typingCooldownEnabledKey,
+            streamingTranscriptionEnabledKey, streamingChunkIntervalKey,
+            tailRecordingDelayKey, vadEarlyStopEnabledKey,
+            useStreamingAsFinalKey, vadTrimEnabledKey,
+            modelKeepAliveEnabledKey,
         ]
         allKeys.forEach { defaults.removeObject(forKey: $0) }
     }
@@ -432,6 +593,13 @@ final class SettingsManager: ObservableObject {
             "selectedInputDevice": selectedInputDevice ?? NSNull(),
             "soundFeedbackEnabled": soundFeedbackEnabled,
             "typingCooldownEnabled": typingCooldownEnabled,
+            "streamingTranscriptionEnabled": streamingTranscriptionEnabled,
+            "streamingChunkInterval": streamingChunkInterval,
+            "tailRecordingDelay": tailRecordingDelay,
+            "vadEarlyStopEnabled": vadEarlyStopEnabled,
+            "useStreamingAsFinal": useStreamingAsFinal,
+            "vadTrimEnabled": vadTrimEnabled,
+            "modelKeepAliveEnabled": modelKeepAliveEnabled,
         ]
 
         if let jsonData = try? JSONSerialization.data(withJSONObject: settings, options: .prettyPrinted) {
@@ -520,6 +688,34 @@ final class SettingsManager: ObservableObject {
 
         if let value = json["typingCooldownEnabled"] as? Bool {
             typingCooldownEnabled = value
+        }
+
+        if let value = json["streamingTranscriptionEnabled"] as? Bool {
+            streamingTranscriptionEnabled = value
+        }
+
+        if let value = json["streamingChunkInterval"] as? TimeInterval {
+            streamingChunkInterval = value
+        }
+
+        if let value = json["tailRecordingDelay"] as? TimeInterval {
+            tailRecordingDelay = value
+        }
+
+        if let value = json["vadEarlyStopEnabled"] as? Bool {
+            vadEarlyStopEnabled = value
+        }
+
+        if let value = json["useStreamingAsFinal"] as? Bool {
+            useStreamingAsFinal = value
+        }
+
+        if let value = json["vadTrimEnabled"] as? Bool {
+            vadTrimEnabled = value
+        }
+
+        if let value = json["modelKeepAliveEnabled"] as? Bool {
+            modelKeepAliveEnabled = value
         }
     }
 

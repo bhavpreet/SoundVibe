@@ -28,6 +28,10 @@ class IndicatorStateModel: ObservableObject {
     @Published var state: IndicatorState = .listening
     @Published var errorMessage: String = ""
 
+    /// Current live preview text from streaming transcription.
+    /// Empty when streaming is disabled or not yet started.
+    @Published var livePreviewText: String = ""
+
     /// Phase accumulator for the processing spinner animation.
     @Published var waveformPhase: Double = 0
 
@@ -177,6 +181,21 @@ class FloatingIndicatorWindow: NSPanel {
             self.hideTimer?.invalidate()
             self.hideTimer = nil
             self.stopAnimations()
+            self.stateModel.livePreviewText = ""
+        }
+    }
+
+    /// Updates the live preview text shown below the waveform during recording.
+    func updateLivePreview(_ text: String) {
+        DispatchQueue.main.async {
+            self.stateModel.livePreviewText = text
+        }
+    }
+
+    /// Clears the live preview text.
+    func clearLivePreview() {
+        DispatchQueue.main.async {
+            self.stateModel.livePreviewText = ""
         }
     }
 
@@ -449,6 +468,20 @@ class FloatingIndicatorManager {
 
     func hide() {
         window.hideIndicator()
+    }
+
+    /// Updates the live preview text in the floating indicator.
+    /// Safe to call from any thread.
+    @MainActor
+    func updateLivePreview(_ text: String) {
+        window.updateLivePreview(text)
+    }
+
+    /// Clears the live preview text in the floating indicator.
+    /// Safe to call from any thread.
+    @MainActor
+    func clearLivePreview() {
+        window.clearLivePreview()
     }
 
     /// Push a real-time audio level (0–1) to the waveform display.

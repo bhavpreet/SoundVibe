@@ -139,9 +139,9 @@ public struct DeviceProfiler {
     } else if ramGB < 16 {
       return .small
     } else if ramGB < 32 {
-      return .medium
+      return .largeV3Turbo
     } else {
-      return .largeV3
+      return .largeV3Turbo
     }
   }
 

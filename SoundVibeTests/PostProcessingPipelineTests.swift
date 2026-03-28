@@ -272,7 +272,8 @@ final class PostProcessingPipelineTests: XCTestCase {
 
         do {
             let result = try await pipeline.process(input, settings: settings)
-            XCTAssertEqual(result, input, "Whitespace-only text should be preserved")
+            // Whitespace-only input passes through voice command parsing unchanged.
+            XCTAssertEqual(result, input, "Whitespace-only text passes through unchanged")
         } catch {
             XCTFail("Processing whitespace text should not fail: \(error)")
         }
