@@ -15,6 +15,9 @@ actor AudioSampleBuffer {
     /// How many buffers have been consolidated into the cache
     private var lastConsolidatedIndex: Int = 0
 
+    /// The sample rate used to build the current cache
+    private var cachedTargetRate: Double = 0
+
     private(set) var duration: TimeInterval = 0
     private(set) var currentLevel: Float = 0.0
 
@@ -32,6 +35,7 @@ actor AudioSampleBuffer {
         buffers.removeAll()
         consolidatedCache.removeAll()
         lastConsolidatedIndex = 0
+        cachedTargetRate = 0
         duration = 0
         currentLevel = 0
     }
@@ -40,6 +44,14 @@ actor AudioSampleBuffer {
     /// without clearing the buffer. Uses incremental consolidation — only processes
     /// buffers added since the last call, making it O(new_buffers) instead of O(total_buffers).
     func snapshot(sampleRate targetRate: Double) -> [Float] {
+        // Invalidate cache if target rate changed (e.g. snapshot at native
+        // rate vs consolidate at 16kHz)
+        if cachedTargetRate != targetRate {
+            consolidatedCache.removeAll()
+            lastConsolidatedIndex = 0
+            cachedTargetRate = targetRate
+        }
+
         // Process only new buffers since last consolidation
         let newBuffers = Array(buffers[lastConsolidatedIndex...])
         let newSamples = processBuffers(newBuffers, targetRate: targetRate)
@@ -51,6 +63,14 @@ actor AudioSampleBuffer {
     /// Consolidates all buffered audio into a single Float array at the target sample rate.
     /// Uses the cache if available, only processing remaining buffers.
     func consolidate(sampleRate targetRate: Double) -> [Float] {
+        // Invalidate cache if target rate changed (e.g. snapshot was called
+        // at native rate but consolidate needs 16kHz for Whisper)
+        if cachedTargetRate != targetRate {
+            consolidatedCache.removeAll()
+            lastConsolidatedIndex = 0
+            cachedTargetRate = targetRate
+        }
+
         if lastConsolidatedIndex < buffers.count {
             // Process remaining buffers not yet in the cache
             let remaining = Array(buffers[lastConsolidatedIndex...])
@@ -60,6 +80,7 @@ actor AudioSampleBuffer {
         } else if consolidatedCache.isEmpty {
             // No cache available, process everything
             let allSamples = processBuffers(buffers, targetRate: targetRate)
+            cachedTargetRate = targetRate
             return allSamples
         }
         return consolidatedCache
