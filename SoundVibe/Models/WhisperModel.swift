@@ -6,7 +6,20 @@ public enum WhisperModelSize: String, Codable, CaseIterable {
   case base
   case small
   case medium
+  case largeV3Turbo = "large-v3-turbo"
   case largeV3 = "large-v3"
+
+  /// The WhisperKit model identifier used for downloading and loading.
+  /// Maps to the folder name in the argmaxinc/whisperkit-coreml HuggingFace repo.
+  /// Note: the turbo variant uses an underscore (`_turbo`) not a hyphen in the hub.
+  var whisperKitIdentifier: String {
+    switch self {
+    case .largeV3Turbo:
+      return "openai_whisper-large-v3_turbo"
+    default:
+      return "openai_whisper-\(rawValue)"
+    }
+  }
 
   var displayName: String {
     switch self {
@@ -18,6 +31,8 @@ public enum WhisperModelSize: String, Codable, CaseIterable {
       return "Small (466MB) - Balanced speed and accuracy"
     case .medium:
       return "Medium (1.5GB) - High accuracy, slower"
+    case .largeV3Turbo:
+      return "Large V3 Turbo (809MB) - Near-best accuracy, fast"
     case .largeV3:
       return "Large V3 (2.9GB) - Highest accuracy"
     }
@@ -33,6 +48,8 @@ public enum WhisperModelSize: String, Codable, CaseIterable {
       return "ggml-small.bin"
     case .medium:
       return "ggml-medium.bin"
+    case .largeV3Turbo:
+      return "ggml-large-v3-turbo.bin"
     case .largeV3:
       return "ggml-large-v3.bin"
     }
@@ -55,6 +72,8 @@ public enum WhisperModelSize: String, Codable, CaseIterable {
       return 466_000_000
     case .medium:
       return 1_500_000_000
+    case .largeV3Turbo:
+      return 809_000_000
     case .largeV3:
       return 2_900_000_000
     }
@@ -71,6 +90,8 @@ public enum WhisperModelSize: String, Codable, CaseIterable {
       return 244_000_000
     case .medium:
       return 769_000_000
+    case .largeV3Turbo:
+      return 809_000_000
     case .largeV3:
       return 1_550_000_000
     }
@@ -87,6 +108,8 @@ public enum WhisperModelSize: String, Codable, CaseIterable {
       return 0.5
     case .medium:
       return 0.25
+    case .largeV3Turbo:
+      return 0.4
     case .largeV3:
       return 0.1
     }
@@ -103,6 +126,8 @@ public enum WhisperModelSize: String, Codable, CaseIterable {
       return 0.08
     case .medium:
       return 0.05
+    case .largeV3Turbo:
+      return 0.021
     case .largeV3:
       return 0.04
     }
@@ -112,9 +137,9 @@ public enum WhisperModelSize: String, Codable, CaseIterable {
   /// (WhisperKit uses folder structure, not single .bin file)
   var isDownloaded: Bool {
     // WhisperKit downloads to:
-    // modelsDirectory/openai_whisper-{variant}/
+    // modelsDirectory/{whisperKitIdentifier}/
     let folderPath = Self.modelsDirectory
-      .appendingPathComponent("openai_whisper-\(rawValue)")
+      .appendingPathComponent(whisperKitIdentifier)
 
     // Check if folder exists
     guard FileManager.default.fileExists(
@@ -134,11 +159,17 @@ public enum WhisperModelSize: String, Codable, CaseIterable {
   }
 
   /// Required files that must be present in a valid
-  /// WhisperKit model folder
+  /// WhisperKit model folder.
+  /// WhisperKit CoreML models use separate .mlmodelc bundles
+  /// for each component — not a single "model.mlmodelc".
+  /// Tokenizers are managed separately by WhisperKit via the
+  /// tokenizerFolder parameter, so tokenizer.json is not
+  /// required inside the model folder.
   static let requiredModelFiles = [
     "config.json",
-    "tokenizer.json",
-    "model.mlmodelc",
+    "MelSpectrogram.mlmodelc",
+    "AudioEncoder.mlmodelc",
+    "TextDecoder.mlmodelc",
   ]
 
   /// The directory where all Whisper models are stored
@@ -173,6 +204,8 @@ public enum WhisperModelSize: String, Codable, CaseIterable {
       return "⚡⚡⚡"
     case .medium:
       return "⚡⚡"
+    case .largeV3Turbo:
+      return "⚡⚡⚡"
     case .largeV3:
       return "⚡"
     }
@@ -189,6 +222,8 @@ public enum WhisperModelSize: String, Codable, CaseIterable {
       return "⭐⭐⭐"
     case .medium:
       return "⭐⭐⭐⭐"
+    case .largeV3Turbo:
+      return "⭐⭐⭐⭐⭐"
     case .largeV3:
       return "⭐⭐⭐⭐⭐"
     }
@@ -201,6 +236,7 @@ public enum WhisperModelSize: String, Codable, CaseIterable {
     case .base: return 4
     case .small: return 3
     case .medium: return 2
+    case .largeV3Turbo: return 3
     case .largeV3: return 1
     }
   }
@@ -212,6 +248,7 @@ public enum WhisperModelSize: String, Codable, CaseIterable {
     case .base: return 2
     case .small: return 3
     case .medium: return 4
+    case .largeV3Turbo: return 5
     case .largeV3: return 5
     }
   }
@@ -230,6 +267,8 @@ public enum WhisperModelSize: String, Codable, CaseIterable {
       return 1.0
     case .medium:
       return 2.5
+    case .largeV3Turbo:
+      return 2.0
     case .largeV3:
       return 5.0
     }
@@ -247,6 +286,8 @@ public enum WhisperModelSize: String, Codable, CaseIterable {
       return 6.0
     case .medium:
       return 15.0
+    case .largeV3Turbo:
+      return 10.0
     case .largeV3:
       return 30.0
     }
