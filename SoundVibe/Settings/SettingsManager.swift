@@ -1,4 +1,5 @@
 import Foundation
+import ServiceManagement
 
 #if canImport(AppKit)
 import AppKit
@@ -252,9 +253,7 @@ final class SettingsManager: ObservableObject {
     @Published var launchAtLogin: Bool = false {
         didSet {
             defaults.set(launchAtLogin, forKey: launchAtLoginKey)
-            #if canImport(AppKit)
             updateLaunchAtLogin()
-            #endif
         }
     }
 
@@ -414,6 +413,7 @@ final class SettingsManager: ObservableObject {
         autoPunctuation = defaults.bool(forKey: autoPunctuationKey)
         postProcessingEnabled = defaults.bool(forKey: postProcessingEnabledKey)
         launchAtLogin = defaults.bool(forKey: launchAtLoginKey)
+        syncLaunchAtLoginState()
         showFloatingIndicator = defaults.object(forKey: showFloatingIndicatorKey) == nil ? true : defaults.bool(forKey: showFloatingIndicatorKey)
         clipboardRestoreEnabled = defaults.object(forKey: clipboardRestoreEnabledKey) == nil ? true : defaults.bool(forKey: clipboardRestoreEnabledKey)
 
@@ -719,9 +719,28 @@ final class SettingsManager: ObservableObject {
         }
     }
 
-    #if canImport(AppKit)
     private func updateLaunchAtLogin() {
-        // Placeholder for login item management
+        let service = SMAppService.mainApp
+        do {
+            if launchAtLogin {
+                try service.register()
+            } else {
+                try service.unregister()
+            }
+        } catch {
+            print(
+                "Failed to \(launchAtLogin ? "enable" : "disable") launch at login: \(error)"
+            )
+        }
     }
-    #endif
+
+    /// Sync our stored setting with the actual system login item state.
+    /// The user may have toggled it off in System Settings > General > Login Items.
+    private func syncLaunchAtLoginState() {
+        let status = SMAppService.mainApp.status
+        let isRegistered = (status == .enabled)
+        if launchAtLogin != isRegistered {
+            launchAtLogin = isRegistered
+        }
+    }
 }
