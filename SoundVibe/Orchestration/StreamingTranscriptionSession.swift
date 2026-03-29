@@ -246,7 +246,8 @@ final class StreamingTranscriptionSession {
                 sampleRate: sampleRate,
                 threshold: 0.05,
                 minSpeechDuration: 0.3,
-                marginSeconds: 0.15
+                leadingMarginSeconds: 0.2,
+                trailingMarginSeconds: 0.05
             ).samples
 
             // Run transcription concurrently (non-blocking for the loop).

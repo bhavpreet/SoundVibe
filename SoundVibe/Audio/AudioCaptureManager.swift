@@ -49,6 +49,13 @@ actor AudioCaptureManager {
     /// Smoothed audio level with attack/decay for VU meter (A3)
     private(set) var smoothedAudioLevel: Float = 0.0
 
+    /// Duration (in seconds) of audio to discard at the start of each
+    /// capture session. Removes transient hotkey click/key sounds that
+    /// would otherwise contaminate the first few hundred milliseconds
+    /// and cause Whisper hallucinations.
+    private let leadInDiscardDuration: TimeInterval = 0.15
+    private var captureStartTime: Date?
+
     /// Attack coefficient — how fast the meter rises
     private let attackCoefficient: Float = 0.3
 
@@ -77,6 +84,7 @@ actor AudioCaptureManager {
 
         try configureAudioEngine()
 
+        captureStartTime = Date()
         isCapturing = true
         delegateQueue.async { [weak self] in
             self?.delegate?.didStartCapture()
@@ -99,6 +107,7 @@ actor AudioCaptureManager {
         engine.stop()
         engine.inputNode.removeTap(onBus: 0)
         isCapturing = false
+        captureStartTime = nil
 
         let audioData = await audioBuffer.consolidate(sampleRate: 16000)
         await audioBuffer.reset()
@@ -167,6 +176,14 @@ actor AudioCaptureManager {
     private func didReceiveAudioBuffer(
         _ buffer: AVAudioPCMBuffer
     ) async {
+        // Discard buffers arriving within the lead-in window to
+        // remove hotkey click/key sounds from the recording.
+        if let startTime = captureStartTime,
+           Date().timeIntervalSince(startTime) < leadInDiscardDuration
+        {
+            return
+        }
+
         await audioBuffer.append(buffer)
 
         let level = calculateRMSLevel(buffer)

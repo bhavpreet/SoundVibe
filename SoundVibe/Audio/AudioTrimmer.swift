@@ -25,15 +25,20 @@ struct AudioTrimmer {
     ///     for the result to be considered valid. If the detected speech region
     ///     is shorter than this, the original samples are returned untrimmed
     ///     to avoid discarding legitimate short utterances.
-    ///   - marginSeconds: Margin (in seconds) to preserve before the first and
-    ///     after the last detected speech frame. Default 0.1s (100ms).
+    ///   - leadingMarginSeconds: Margin (in seconds) to preserve before the
+    ///     first detected speech frame. Default 0.2s (200ms) — generous to
+    ///     avoid clipping plosive consonant onsets (p, t, k, b, d, g).
+    ///   - trailingMarginSeconds: Margin (in seconds) to preserve after the
+    ///     last detected speech frame. Default 0.05s (50ms) — tight because
+    ///     trailing silence is the primary cause of Whisper hallucinations.
     /// - Returns: A `TrimResult` containing the trimmed samples and statistics.
     static func trimSilence(
         from samples: [Float],
         sampleRate: Double,
         threshold: Float = 0.05,
         minSpeechDuration: Double = 0.3,
-        marginSeconds: Double = 0.1
+        leadingMarginSeconds: Double = 0.2,
+        trailingMarginSeconds: Double = 0.05
     ) -> TrimResult {
         let originalDuration = Double(samples.count) / sampleRate
 
@@ -98,13 +103,15 @@ struct AudioTrimmer {
             }
         }
 
-        // Convert frame indices to sample indices with margin
-        let marginSamples = Int(marginSeconds * sampleRate)
+        // Convert frame indices to sample indices with asymmetric margins
+        let leadingMarginSamples = Int(leadingMarginSeconds * sampleRate)
+        let trailingMarginSamples = Int(trailingMarginSeconds * sampleRate)
         let speechStartSample = max(
-            0, firstSpeechFrame * frameSize - marginSamples
+            0, firstSpeechFrame * frameSize - leadingMarginSamples
         )
         let speechEndSample = min(
-            samples.count, (lastSpeechFrame + 1) * frameSize + marginSamples
+            samples.count,
+            (lastSpeechFrame + 1) * frameSize + trailingMarginSamples
         )
 
         // Check minimum speech duration

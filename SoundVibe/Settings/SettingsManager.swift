@@ -287,7 +287,7 @@ final class SettingsManager: ObservableObject {
         }
     }
 
-    @Published var soundFeedbackEnabled: Bool = true {
+    @Published var soundFeedbackEnabled: Bool = false {
         didSet {
             defaults.set(soundFeedbackEnabled, forKey: soundFeedbackEnabledKey)
         }
@@ -445,7 +445,7 @@ final class SettingsManager: ObservableObject {
         // Load sound feedback (ON by default)
         soundFeedbackEnabled = defaults.object(
             forKey: soundFeedbackEnabledKey
-        ) == nil ? true : defaults.bool(forKey: soundFeedbackEnabledKey)
+        ) == nil ? false : defaults.bool(forKey: soundFeedbackEnabledKey)
 
         // Load typing cooldown (ON by default)
         typingCooldownEnabled = defaults.object(
@@ -521,7 +521,7 @@ final class SettingsManager: ObservableObject {
         pasteDelay = 0.03
         silenceTimeout = 3.0
         selectedInputDevice = nil
-        soundFeedbackEnabled = true
+        soundFeedbackEnabled = false
         typingCooldownEnabled = true
         streamingTranscriptionEnabled = {
             #if arch(arm64)

@@ -203,8 +203,9 @@ final class DictationOrchestrator: NSObject, ObservableObject, HotkeyManagerDele
             floatingIndicatorManager.showFinishing()
         }
 
-        // A6: Play stop sound
-        playSoundFeedback(.stop)
+        // NOTE: Stop sound is deferred to finalizeStopDictation()
+        // to avoid the "Pop" being captured by the microphone
+        // during the tail recording window.
 
         tailRecordingTask = Task {
             // VAD-based early cutoff: poll audio level during tail window
@@ -258,6 +259,11 @@ final class DictationOrchestrator: NSObject, ObservableObject, HotkeyManagerDele
         let activeStreamingSession = streamingSession
 
         let audioSamples = await audioCapture.stopCapture()
+
+        // A6: Play stop sound AFTER capture is fully stopped so the
+        // "Pop" doesn't contaminate the recorded audio.
+        playSoundFeedback(.stop)
+
         logger.debug(
             "Audio capture stopped, captured \(audioSamples.count) samples"
         )
@@ -543,6 +549,27 @@ final class DictationOrchestrator: NSObject, ObservableObject, HotkeyManagerDele
                 samplesToTranscribe = audioSamples
             }
 
+            // Pre-transcription check: skip if audio has insufficient
+            // speech energy (would likely produce hallucinations)
+            if streamingResult == nil,
+               !TranscriptionFilter.hasSufficientSpeech(
+                   in: samplesToTranscribe
+               )
+            {
+                NSLog(
+                    "[SoundVibe] Audio has insufficient speech energy"
+                    + " — skipping transcription"
+                )
+                updateState(.idle)
+                menuBarManager.updateState(.idle)
+                if settingsManager.showFloatingIndicator {
+                    floatingIndicatorManager.showError(
+                        message: "No speech detected"
+                    )
+                }
+                return
+            }
+
             // Use streaming result if provided, otherwise full re-transcription
             let transcriptionResult: TranscriptionResult
             if let streaming = streamingResult {
@@ -551,11 +578,33 @@ final class DictationOrchestrator: NSObject, ObservableObject, HotkeyManagerDele
             } else {
                 transcriptionResult = try await transcriptionEngine.transcribe(
                     audioData: samplesToTranscribe,
-                    language: settingsManager.autoLanguageDetection ? nil : settingsManager.selectedLanguage,
+                    language: settingsManager.autoLanguageDetection
+                        ? nil : settingsManager.selectedLanguage,
                     detectLanguage: settingsManager.autoLanguageDetection
                 )
             }
-            NSLog("[SoundVibe] Transcription: \"\(transcriptionResult.text)\"")
+            NSLog(
+                "[SoundVibe] Transcription: "
+                + "\"\(transcriptionResult.text)\""
+            )
+
+            // Post-transcription check: filter hallucinated output
+            if TranscriptionFilter.isHallucination(
+                transcriptionResult.text
+            ) {
+                NSLog(
+                    "[SoundVibe] Hallucination filtered: "
+                    + "\"\(transcriptionResult.text)\""
+                )
+                updateState(.idle)
+                menuBarManager.updateState(.idle)
+                if settingsManager.showFloatingIndicator {
+                    floatingIndicatorManager.showError(
+                        message: "No speech detected"
+                    )
+                }
+                return
+            }
 
             updateState(.postProcessing)
             let processedText = try await postProcessingPipeline.process(

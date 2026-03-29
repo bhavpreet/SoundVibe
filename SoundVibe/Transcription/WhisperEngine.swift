@@ -203,14 +203,19 @@ public class WhisperEngine: TranscriptionEngine, @unchecked Sendable {
                 task: .transcribe,
                 language: detectLanguage ? nil : language,
                 temperature: 0.0,
-                temperatureFallbackCount: 3,
+                temperatureFallbackCount: 2,
                 topK: 5,
                 usePrefillPrompt: !detectLanguage,
                 usePrefillCache: true,
                 detectLanguage: detectLanguage ? true : nil,
                 skipSpecialTokens: true,
                 withoutTimestamps: true,
-                clipTimestamps: [0]
+                clipTimestamps: [0],
+                suppressBlank: true,
+                compressionRatioThreshold: 2.4,
+                logProbThreshold: -0.8,
+                firstTokenLogProbThreshold: -1.0,
+                noSpeechThreshold: 0.4
             )
 
             let wkResults = try await whisperKit.transcribe(
@@ -265,14 +270,19 @@ public class WhisperEngine: TranscriptionEngine, @unchecked Sendable {
                 task: .transcribe,
                 language: detectLanguage ? nil : language,
                 temperature: 0.0,
-                temperatureFallbackCount: 3,
+                temperatureFallbackCount: 2,
                 topK: 5,
                 usePrefillPrompt: !detectLanguage,
                 usePrefillCache: true,
                 detectLanguage: detectLanguage ? true : nil,
                 skipSpecialTokens: true,
                 withoutTimestamps: true,
-                clipTimestamps: [0]
+                clipTimestamps: [0],
+                suppressBlank: true,
+                compressionRatioThreshold: 2.4,
+                logProbThreshold: -0.8,
+                firstTokenLogProbThreshold: -1.0,
+                noSpeechThreshold: 0.4
             )
 
             // Use the direct segmentCallback parameter (not the instance property)
