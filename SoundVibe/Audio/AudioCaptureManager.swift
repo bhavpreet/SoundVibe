@@ -49,12 +49,10 @@ actor AudioCaptureManager {
     /// Smoothed audio level with attack/decay for VU meter (A3)
     private(set) var smoothedAudioLevel: Float = 0.0
 
-    /// Duration (in seconds) of audio to discard at the start of each
-    /// capture session. Removes transient hotkey click/key sounds that
-    /// would otherwise contaminate the first few hundred milliseconds
-    /// and cause Whisper hallucinations.
-    private let leadInDiscardDuration: TimeInterval = 0.15
-    private var captureStartTime: Date?
+    /// Number of samples (at native hardware rate) to discard at the
+    /// start of each capture session. Removes transient hotkey click/key
+    /// sounds. Computed from the native sample rate in configureAudioEngine().
+    private var leadInDiscardRemaining: Int = 0
 
     /// Attack coefficient — how fast the meter rises
     private let attackCoefficient: Float = 0.3
@@ -82,9 +80,15 @@ actor AudioCaptureManager {
 
         guard !isCapturing else { return }
 
+        // Reset all state from the previous session to avoid stale
+        // audio buffers or level readings leaking into the new session.
+        await audioBuffer.reset()
+        engine = AVAudioEngine()
+        audioLevel = 0
+        smoothedAudioLevel = 0
+
         try configureAudioEngine()
 
-        captureStartTime = Date()
         isCapturing = true
         delegateQueue.async { [weak self] in
             self?.delegate?.didStartCapture()
@@ -107,7 +111,7 @@ actor AudioCaptureManager {
         engine.stop()
         engine.inputNode.removeTap(onBus: 0)
         isCapturing = false
-        captureStartTime = nil
+        leadInDiscardRemaining = 0
 
         let audioData = await audioBuffer.consolidate(sampleRate: 16000)
         await audioBuffer.reset()
@@ -147,6 +151,10 @@ actor AudioCaptureManager {
         let inputNode = engine.inputNode
         let inputFormat = inputNode.outputFormat(forBus: 0)
 
+        // Discard the first 150ms of samples to remove hotkey click sounds.
+        // Using sample count (not wall-clock time) avoids async timing drift.
+        leadInDiscardRemaining = Int(inputFormat.sampleRate * 0.15)
+
         // Always tap at the native hardware rate.
         // NOTE: installTap() raises NSException (not a Swift Error) for
         // incompatible formats, so attempting a non-native rate like 16kHz
@@ -176,11 +184,10 @@ actor AudioCaptureManager {
     private func didReceiveAudioBuffer(
         _ buffer: AVAudioPCMBuffer
     ) async {
-        // Discard buffers arriving within the lead-in window to
-        // remove hotkey click/key sounds from the recording.
-        if let startTime = captureStartTime,
-           Date().timeIntervalSince(startTime) < leadInDiscardDuration
-        {
+        // Discard samples in the lead-in window to remove hotkey
+        // click/key sounds from the recording.
+        if leadInDiscardRemaining > 0 {
+            leadInDiscardRemaining -= Int(buffer.frameLength)
             return
         }
 

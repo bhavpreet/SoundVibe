@@ -158,16 +158,16 @@ final class AudioUXTests: XCTestCase {
 
     func testSoundFeedbackSettingDefault() {
         let settings = SettingsManager(forTesting: true)
-        XCTAssertTrue(
+        XCTAssertFalse(
             settings.soundFeedbackEnabled,
-            "Sound feedback should be ON by default"
+            "Sound feedback should be OFF by default"
         )
     }
 
     func testSoundFeedbackPlaysOnStart() {
         // Verify the setting can be toggled
         let settings = SettingsManager(forTesting: true)
-        XCTAssertTrue(settings.soundFeedbackEnabled)
+        XCTAssertFalse(settings.soundFeedbackEnabled)
 
         settings.soundFeedbackEnabled = false
         XCTAssertFalse(
@@ -237,7 +237,7 @@ final class AudioUXTests: XCTestCase {
 
     func testNewSettingsImportRestoresAudioUXKeys() throws {
         let json: [String: Any] = [
-            "soundFeedbackEnabled": false,
+            "soundFeedbackEnabled": true,
             "typingCooldownEnabled": false,
         ]
         let data = try JSONSerialization.data(
@@ -245,11 +245,11 @@ final class AudioUXTests: XCTestCase {
         )
 
         let settings = SettingsManager(forTesting: true)
-        XCTAssertTrue(settings.soundFeedbackEnabled)
+        XCTAssertFalse(settings.soundFeedbackEnabled)
         XCTAssertTrue(settings.typingCooldownEnabled)
 
         try settings.importSettings(data)
-        XCTAssertFalse(
+        XCTAssertTrue(
             settings.soundFeedbackEnabled,
             "Import should restore soundFeedbackEnabled"
         )
